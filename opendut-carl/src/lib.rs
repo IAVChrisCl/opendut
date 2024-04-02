@@ -99,23 +99,21 @@ pub async fn create(settings: LoadedConfig) -> Result<()> { //TODO
     };
 
 
-    let resources_manager = Arc::new(ResourcesManager::new());
-    let peer_messaging_broker = {
-        Arc::new(PeerMessagingBroker::new(
-            Arc::clone(&resources_manager),
-            PeerMessagingBrokerOptions::load(&settings.config)?,
-        ))
-    };
-    let cluster_manager = Arc::new(ClusterManager::new(
+    let resources_manager = ResourcesManager::new();
+    let peer_messaging_broker = PeerMessagingBroker::new(
+        Arc::clone(&resources_manager),
+        PeerMessagingBrokerOptions::load(&settings.config)?,
+    );
+    let cluster_manager = ClusterManager::new(
         Arc::clone(&resources_manager),
         Arc::clone(&peer_messaging_broker),
         Clone::clone(&vpn),
         ClusterManagerOptions::load(&settings.config)?,
-    ));
+    );
 
     /// Isolation in function returning BoxFuture needed due to this: https://github.com/rust-lang/rust/issues/102211#issuecomment-1397600424
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(name = "spawn_server", skip(peer_messaging_broker, cluster_manager, resources_manager, vpn), level="TRACE")]
+    #[tracing::instrument(skip(peer_messaging_broker, cluster_manager, resources_manager, vpn), level="TRACE")]
     fn spawn_server(
         address: SocketAddr,
         tls_config: RustlsConfig,
@@ -166,7 +164,7 @@ pub async fn create(settings: LoadedConfig) -> Result<()> { //TODO
                     panic!("Failed to parse comma-separated OIDC scopes for LEA. Scopes must only contain ASCII alphabetic characters. Found: {:?}. Parsed as: {:?}", lea_idp_config.scopes, scopes);
                 }
             }
-            info!("OIDC is enabled: {:?}", lea_idp_config);
+            info!("OIDC is enabled.");
             Some(LeaIdentityProviderConfig {
                 client_id: lea_idp_config.client_id,
                 issuer_url: lea_idp_config.issuer_url,

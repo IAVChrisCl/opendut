@@ -7,7 +7,7 @@ use console::Style;
 use uuid::Uuid;
 
 use opendut_carl_api::carl::CarlClient;
-use opendut_types::peer::{PeerSetup};
+use opendut_types::peer::PeerSetup;
 use opendut_types::peer::executor::{ContainerCommand, ContainerCommandArgument, ContainerDevice, ContainerImage, ContainerName, ContainerPortSpec, ContainerVolume};
 use opendut_types::topology::DeviceName;
 use opendut_types::util::net::NetworkInterfaceName;
@@ -116,6 +116,12 @@ pub enum EngineVariants {
     Podman,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum NetworkInterfaceType {
+    Ethernet,
+    Can,
+}
+
 #[derive(Subcommand, Clone, Debug)]
 enum CreateResource {
     ClusterConfiguration {
@@ -180,13 +186,16 @@ enum CreateResource {
         #[arg(short, long, num_args = 1..)]
         args: Option<Vec<ContainerCommandArgument>>,
     },
-    NetworkConfiguration {
+    NetworkInterface {
         ///ID of the peer to add the network interface to
         #[arg(long)]
         peer_id: Uuid,
-        ///Device interfaces per peer
-        #[arg(long("interface"))]
-        interfaces: Option<Vec<String>>,
+        ///Type of the network interface
+        #[arg(long("type"))]
+        interface_type: NetworkInterfaceType,
+        ///Name of the network interface
+        #[arg(long("name"))]
+        interface_name: String,
     },
     Device {
         ///ID of the peer to add the device to
@@ -263,7 +272,7 @@ enum DeleteResource {
         #[arg(short, long)]
         images: Vec<ContainerImage>,
     },
-    NetworkConfiguration {
+    NetworkInterface {
         ///ID of the peer to delete the network configuration from
         #[arg(long)]
         peer_id: Uuid,
@@ -395,8 +404,8 @@ async fn execute() -> Result<()> {
                 CreateResource::ContainerExecutor { peer_id, engine, name, image, volumes, devices, envs, ports, command, args} => {
                     commands::executor::create::execute(&mut carl, peer_id, engine, name, image, volumes, devices, envs, ports, command, args, output).await?;
                 }
-                CreateResource::NetworkConfiguration { peer_id, interfaces} => {
-                    commands::network_configuration::create::execute(&mut carl, peer_id, interfaces, output).await?;
+                CreateResource::NetworkInterface { peer_id, interface_type, interface_name} => {
+                    commands::network_interface::create::execute(&mut carl, peer_id, interface_type, interface_name, output).await?;
                 }
                 CreateResource::Device { peer_id, device_id, name, description, interface, tags } => {
                     commands::device::create::execute(&mut carl, peer_id, device_id, name, description, interface, tags, output).await?;
@@ -436,8 +445,8 @@ async fn execute() -> Result<()> {
                 DeleteResource::ContainerExecutor { peer_id, images} => {
                     commands::executor::delete::execute(&mut carl, peer_id, images).await?;
                 }
-                DeleteResource::NetworkConfiguration { peer_id,  interfaces} => {
-                    commands::network_configuration::delete::execute(&mut carl, peer_id, interfaces).await?;
+                DeleteResource::NetworkInterface { peer_id,  interfaces} => {
+                    commands::network_interface::delete::execute(&mut carl, peer_id, interfaces).await?;
                 }
                 DeleteResource::Device { id } => {
                     commands::device::delete::execute(&mut carl, id).await?;
