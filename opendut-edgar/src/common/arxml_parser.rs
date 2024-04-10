@@ -1,9 +1,11 @@
-use std::fs::File;
+use std::{f32::consts::E, fs::File};
 use std::io::BufReader;
 use std::collections::HashSet;
 use std::time::Instant;
 
 use xml::reader::{EventReader, XmlEvent};
+
+use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
 
 /*
 - Arxml parser that is able to extract all values necessary for a restbus simulation
@@ -76,19 +78,193 @@ pub struct ArxmlParser {
 }
 
 impl ArxmlParser {
-    // Create BufReader for a local file
-    pub fn create_reader(&self, file_name: &str) -> BufReader<File> {
-        println!("[+] Called ArxmlParser.create_reader");
+    fn handle_isignal_ipdu(&self, pdu: &Element){
 
-        let file = match File::open(file_name) {
-            Err(_) => panic!("Could not open file"),
-            Ok(file) => file,
-        };
+    }
+    
+    fn handle_dcm_ipdu(&self, pdu: &Element){
 
-        return BufReader::new(file)
+    }
+    
+    fn handle_nm_pdu(&self, pdu: &Element){
+
+    }
+    
+    fn handle_container_ipdu(&self, pdu: &Element){
+
+    }
+    
+    fn handle_secured_ipdu(&self, pdu: &Element){
+
     }
 
-    // DEBUG
+    fn handle_pdu_mapping(&self, pdu_mapping: &Element) -> Option<()> {
+        let pdu = pdu_mapping
+            .get_sub_element(ElementName::PduRef)
+            .and_then(|pduref| pduref.get_reference_target().ok())?;
+
+        let pdu_name = pdu.item_name()?; 
+
+        let byte_order = pdu_mapping
+            .get_sub_element(ElementName::PackingByteOrder)
+            .and_then(|elem| elem.character_data())
+            .map(|cdata| cdata.to_string());
+
+        let start_position = pdu_mapping
+            .get_sub_element(ElementName::StartPosition)
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| cdata.unsigned_integer_value());
+
+        let pdu_length = pdu
+            .get_sub_element(ElementName::Length)
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| cdata.unsigned_integer_value());
+
+        let pdu_dynamic_length = pdu
+            .get_sub_element(ElementName::HasDynamicLength)
+            .and_then(|elem| elem.character_data());
+
+        match pdu.element_name() {
+            ElementName::ISignalIPdu => {
+                self.handle_isignal_ipdu(&pdu);
+            }
+            ElementName::DcmIPdu => {
+                self.handle_dcm_ipdu(&pdu);
+            }
+            ElementName::NmPdu => {
+                self.handle_nm_pdu(&pdu);
+            }
+            ElementName::GeneralPurposeIPdu => {}
+            ElementName::NPdu => {}
+            ElementName::XcpPdu => {}
+            ElementName::ContainerIPdu => {
+                self.handle_container_ipdu(&pdu);
+            }
+            ElementName::SecuredIPdu => {
+                self.handle_secured_ipdu(&pdu);
+            }
+            ElementName::GeneralPurposePdu => {}
+            _ => {
+                panic!("PDU type not supported.")
+            }
+        }
+
+        Some(())
+    }
+
+    fn handle_can_frame_triggering(&self, can_frame_triggering: &Element) -> Option<()> {
+        // implement method extarcing element cdata
+        let can_frame_triggering_name = can_frame_triggering
+            .item_name();
+
+        let can_frame_triggering_identifier = &can_frame_triggering
+            .get_sub_element(ElementName::Identifier)
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| cdata.unsigned_integer_value());
+
+        let frame = can_frame_triggering
+            .get_sub_element(ElementName::FrameRef)?
+            .get_reference_target()
+            .ok()?;
+
+        let canId = &can_frame_triggering
+            .get_sub_element(ElementName::Identifier)
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| cdata.unsigned_integer_value());
+
+        let addressing_mode = if let Some(CharacterData::Enum(value)) = can_frame_triggering
+            .get_sub_element(ElementName::CanAddressingMode)
+            .and_then(|elem| elem.character_data()) 
+        {
+            value
+        } else {
+            EnumItem::Standard
+        };
+
+        let frame_rx_behavior = can_frame_triggering
+            .get_sub_element(ElementName::CanFrameRxBehavior)
+            .and_then(|elem| elem.character_data())
+            .map(|cdata| cdata.to_string());
+
+        let frame_tx_behavior = can_frame_triggering
+            .get_sub_element(ElementName::CanFrameTxBehavior)
+            .and_then(|elem| elem.character_data())
+            .map(|cdata| cdata.to_string());
+
+        let frame_length = frame
+            .get_sub_element(ElementName::FrameLength)
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| cdata.unsigned_integer_value());
+
+        // assign here and other similar variable?
+        if let Some(mappings) = frame.get_sub_element(ElementName::PduToFrameMappings) {
+            for pdu_mapping in mappings.sub_elements() {
+                self.handle_pdu_mapping(&pdu_mapping);
+            }
+        } 
+
+        Some(())
+    }
+
+    fn handle_can_cluster(&self, can_cluster: &Element) -> Option<()> {
+        let can_cluster_name = can_cluster.item_name(); 
+
+        let can_cluster_conditional = can_cluster.get_sub_element(ElementName::CanClusterVariants)
+                        .and_then(|ccv| ccv.get_sub_element(ElementName::CanClusterConditional))?;
+
+        let can_cluster_baudrate = can_cluster_conditional.get_sub_element(ElementName::Baudrate).and_then(|elem| elem.character_data())?;
+        
+        let can_cluster_fd_baudrate = can_cluster_conditional.get_sub_element(ElementName::CanFdBaudrate).and_then(|elem| elem.character_data())?;
+
+        // iterate over PhysicalChannels and handle the CanFrameTriggerings inside them
+        for physical_channel in can_cluster_conditional.get_sub_element(ElementName::PhysicalChannels).map(|elem| {
+            elem.sub_elements().filter(|se| se.element_name() == ElementName::CanPhysicalChannel)
+        })? {
+            if let Some(frame_triggerings) = physical_channel.get_sub_element(ElementName::FrameTriggerings) {
+                for can_frame_triggering in frame_triggerings.sub_elements() {
+                    self.handle_can_frame_triggering(&can_frame_triggering);
+                }
+            }
+        }
+
+        Some(())
+    }
+
+    // Main parsing method. Uses autosar-data libray for parsing ARXML 
+    pub fn parse_file(&self, file_name: String) -> bool {
+        let start = Instant::now();
+
+        let model = AutosarModel::new();
+
+        if let Err(err) = model.load_file(file_name, false) {
+            panic!("Parsing failed. Error: {}", err.to_string());
+        }
+
+        // DEBUG 
+        println!("[+] Duration of loading was: {:?}", start.elapsed());
+        // DEBUG END
+
+        // Iterate over Autosar elements and handle CanCluster elements
+        for element in model
+            .identifiable_elements()
+            .iter()
+            .filter_map(|path| model.get_element_by_path(&path))
+        {
+            match element.element_name() {
+                ElementName::CanCluster => {
+                    self.handle_can_cluster(&element);
+                    
+                }
+                _ => {}
+            }
+        }
+
+        println!("[+] Duration of parsing: {:?}", start.elapsed());
+
+        return true;
+    }
+
+    // DEBUG To be removed
     // Check depth of encountered XML element. Can be removed at a later stage
     pub fn depth_check(&self, depth: i32, depth_expected: i32, name: &str, opening: bool) {
         if depth != depth_expected && 1 == 2 { // watch out
@@ -101,7 +277,7 @@ impl ArxmlParser {
     }
     // DEBUG END
 
-    // Main parsing method. Requires a BufReader instance as argument. Parses Arxml structure and extract all values necessary for restbus simulation. 
+    // OLD Main parsing method that is not used anymore. It is just kept until adaptation to autosar-data library is done. Requires a BufReader instance as argument. Parses Arxml structure and extract all values necessary for restbus simulation. 
     pub fn parse_data(&self, xml_reader: BufReader<File>) -> bool {
         println!("[+] Called ArxmlParser.parse_data");
         println!("[+] Parsing Arxml from BufReader instance");
@@ -425,13 +601,11 @@ impl ArxmlParser {
 
 fn main() {
     println!("[+] Starting openDuT ARXML parser over main method.");
-
-    // config
+    
     let file_name = "test.arxml";
 
     let arxml_parser: ArxmlParser = ArxmlParser {};
 
-    let xml_reader: BufReader<File> = arxml_parser.create_reader(file_name);
-
-    arxml_parser.parse_data(xml_reader);
+    arxml_parser.parse_file(file_name.to_string());
 }
+
