@@ -1,11 +1,7 @@
-use std::{f32::consts::E, fs::File};
-use std::io::BufReader;
-use std::collections::HashSet;
+use core::panic;
 use std::time::Instant;
 
-use xml::reader::{EventReader, XmlEvent};
-
-use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
+use autosar_data::{AutosarModel, CharacterData, Element, ElementName};
 
 /*
 - Arxml parser that is able to extract all values necessary for a restbus simulation
@@ -36,54 +32,178 @@ pub struct RestbusSimulation {
 
 }
 
-// Can-Frame-Triggering element inside a Can-Cluster element of a Cluster package
-// Some values will be skipped when parsing. These will be filled correctly when resolving references
-pub struct CanFrameTriggering {
-    frame_ref: String,
-    identifier: String,
-    is_canfd: bool,
-    //dlc: i8,
-    //...
-}
-
-// Can-Cluster structure representing a Can-Cluster element inside a Cluster package
 pub struct CanCluster {
     name: String,
-    baudrate: i32,
-    canfd_baudrate: i32,
-    sum_physical_channels: i32,
+    baudrate: i64,
+    canfd_baudrate: i64,
     can_frame_triggerings: Vec<CanFrameTriggering>
-    // config?
 }
-
-// Can-Frame element inside the Frame package
-pub struct CanFrame {
-    frame_length: i8,
-    pdu_ref: String
-}
-
-// Pdu elements inside the Pdu package
-pub struct Pdu {
-    pdu_type: String,
-    name: String,
-    cyclic: f32,
-    data: Vec<u8>,
-    data_length: i8,
-    crc_offset: i8,
-    counter_offset: i8
+pub struct CanFrameTriggering {
+    frame_trigger_name: String,
+    frame_name: String,
+    can_id: i64,
+    addressing_mode: u16,
+    frame_rx_behavior: String,
+    frame_tx_behavior: String,
+    frame_length: i64
 }
 
 // Parser structure
 pub struct ArxmlParser {
 }
 
+// Use autosar-data library to parse data like in this example:
+// https://github.com/DanielT/autosar-data/blob/main/autosar-data/examples/businfo/main.rs
+// Do I have to add license to this file or is project license enough?
 impl ArxmlParser {
-    fn handle_isignal_ipdu(&self, pdu: &Element){
+    fn decode_integer(&self, cdata: &CharacterData) -> Option<i64> {
+        if let CharacterData::String(text) = cdata {
+            if text == "0" {
+                Some(0)
+            } else if text.starts_with("0x") {
+                let hexstr = text.strip_prefix("0x").unwrap();
+                Some(i64::from_str_radix(hexstr, 16).ok()?)
+            } else if text.starts_with("0X") {
+                let hexstr = text.strip_prefix("0X").unwrap();
+                Some(i64::from_str_radix(hexstr, 16).ok()?)
+            } else if text.starts_with("0b") {
+                let binstr = text.strip_prefix("0b").unwrap();
+                Some(i64::from_str_radix(binstr, 2).ok()?)
+            } else if text.starts_with("0B") {
+                let binstr = text.strip_prefix("0B").unwrap();
+                Some(i64::from_str_radix(binstr, 2).ok()?)
+            } else if text.starts_with('0') {
+                let octstr = text.strip_prefix('0').unwrap();
+                Some(i64::from_str_radix(octstr, 8).ok()?)
+            } else {
+                Some(text.parse().ok()?)
+            }
+        } else {
+            None
+        }
+    }
 
+    fn get_required_item_name(&self, element: &Element, element_name: &str) -> String {
+        if let Some(item_name) = element.item_name() {
+            return item_name; 
+        } else {
+            panic!("Error getting required item name of {}", element_name);
+        } 
+    }
+
+    fn get_required_sub_subelement(&self, element: &Element, subelement_name: ElementName, sub_subelement_name: ElementName) -> Element {
+        if let Some(sub_subelement) = element 
+            .get_sub_element(subelement_name)
+            .and_then(|elem| elem.get_sub_element(sub_subelement_name)) 
+        {
+            return sub_subelement;
+        } else {
+            panic!("Error getting sub_subelement. Tried to retrieve {} and then {}",
+                subelement_name,
+                sub_subelement_name);
+        } 
+    }
+
+    fn get_subelement_int_value(&self, element: &Element, subelement_name: ElementName) -> Option<i64> {
+        return element 
+            .get_sub_element(subelement_name)
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| self.decode_integer(&cdata));
+    } 
+
+    fn get_required_subelement_int_value(&self, element: &Element, subelement_name: ElementName) -> i64 {
+        if let Some(int_value) = self.get_subelement_int_value(element, subelement_name) {
+            return int_value;
+        } else {
+            panic!("Error getting required integer value of {}", subelement_name);
+        }
+    }
+
+    fn get_optional_subelement_int_value(&self, element: &Element, subelement_name: ElementName) -> i64 {
+        if let Some(int_value) = self.get_subelement_int_value(element, subelement_name) {
+            return int_value;
+        } else {
+            return 0;
+        }
     }
     
-    fn handle_dcm_ipdu(&self, pdu: &Element){
 
+    /*fn handle_isignal_ipdu(&self, pdu: &Element){
+        // Find out these values: ...
+
+        if let Some(tx_mode_true_timing) = pdu
+            .get_sub_element(ElementName::IPduTimingSpecifications)
+            .and_then(|elem| elem.get_sub_element(ElementName::IPduTiming))
+            .and_then(|elem| elem.get_sub_element(ElementName::TransmissionModeDeclaration))
+            .and_then(|elem| elem.get_sub_element(ElementName::TransmissionModeTrueTiming))
+        {
+            if let Some(cyclic_timing) = tx_mode_true_timing
+                .get_sub_element(ElementName::CyclicTiming) 
+            {
+                if let Some(TimeRange { tolerance, value }) = cyclic_timing
+                    .get_sub_element(ElementName::TimePeriod)
+                    .and_then(|elem| get_time_range(&elem))
+                {
+                    let cyclic_timing_value = value;
+                    match tolerance {
+                        Some(TimeRangeTolerance::Absolute(absval)) => {
+                            let cyclic_timing_tolerance_absolute = absval; // in seconds
+                        }
+                        Some(TimeRangeTolerance::Relative(relval)) => {
+                            let cyclic_timing_tolerance_relative = relval; // in %
+                        }
+                        _ => {}
+                    }
+
+                    if let Some(TimeRange { tolerance, value }) = cyclic_timing
+                        .get_sub_element(ElementName::TimeOffset)
+                        .and_then(|elem| get_time_range(&elem))
+                    {
+                        let cyclic_timing_offset_value = value;
+                        match tolerance {
+                            Some(TimeRangeTolerance::Absolute(absval)) => {
+                                let cyclic_timing_offset_tolerance_absolute = absval; // in seconds
+                            }
+                            Some(TimeRangeTolerance::Relative(relval)) => {
+                                let cyclic_timing_offset_tolerance_relative = relval; // in seconds
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            if let Some(event_timing) = tx_mode_true_timing.get_sub_element(ElementName::EventControlledTiming) {
+                if let Some(num_reps) = event_timing
+                    .get_sub_element(ElementName::NumberOfRepetitions)
+                    .and_then(|elem| elem.character_data())
+                    .and_then(|cdata| decode_integer(&cdata))
+                {
+                    let number_of_repetitions = num_reps;
+                }
+                if let Some(repetition_period) = event_timing.get_sub_element(ElementName::RepetitionPeriod) {
+                    if let Some(TimeRange { tolerance, value }) = get_time_range(&repetition_period) {
+                        let repetition_period = value;
+                        if let Some(tol) = tolerance {
+                            match tol {
+                                TimeRangeTolerance::Relative(percent) => {
+                                    let repetition_period_tolerance_relative = percent;
+                                }
+                                TimeRangeTolerance::Absolute(abstol) => {
+                                    let repetition_period_tolerance_absoulte = abstol;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Continue and handle signals
+        }
+    }
+
+    fn handle_dcm_ipdu(&self, pdu: &Element){
+        
     }
     
     fn handle_nm_pdu(&self, pdu: &Element){
@@ -96,9 +216,9 @@ impl ArxmlParser {
     
     fn handle_secured_ipdu(&self, pdu: &Element){
 
-    }
+    }*/
 
-    fn handle_pdu_mapping(&self, pdu_mapping: &Element) -> Option<()> {
+    /*fn handle_pdu_mapping(&self, pdu_mapping: &Element) -> Option<()> {
         let pdu = pdu_mapping
             .get_sub_element(ElementName::PduRef)
             .and_then(|pduref| pduref.get_reference_target().ok())?;
@@ -150,14 +270,14 @@ impl ArxmlParser {
         }
 
         Some(())
-    }
+    }*/
 
-    fn handle_can_frame_triggering(&self, can_frame_triggering: &Element) -> Option<()> {
+    /*fn handle_can_frame_triggering(&self, can_frame_triggering: &Element) -> Option<()> {
         // implement method extarcing element cdata
         let can_frame_triggering_name = can_frame_triggering
             .item_name();
 
-        let can_frame_triggering_identifier = &can_frame_triggering
+        let can_id = &can_frame_triggering
             .get_sub_element(ElementName::Identifier)
             .and_then(|elem| elem.character_data())
             .and_then(|cdata| cdata.unsigned_integer_value());
@@ -167,10 +287,7 @@ impl ArxmlParser {
             .get_reference_target()
             .ok()?;
 
-        let canId = &can_frame_triggering
-            .get_sub_element(ElementName::Identifier)
-            .and_then(|elem| elem.character_data())
-            .and_then(|cdata| cdata.unsigned_integer_value());
+        let frame_name = frame.item_name();
 
         let addressing_mode = if let Some(CharacterData::Enum(value)) = can_frame_triggering
             .get_sub_element(ElementName::CanAddressingMode)
@@ -204,20 +321,33 @@ impl ArxmlParser {
         } 
 
         Some(())
-    }
+    }*/
 
-    fn handle_can_cluster(&self, can_cluster: &Element) -> Option<()> {
-        let can_cluster_name = can_cluster.item_name(); 
+    fn handle_can_cluster(&self, can_cluster: &Element) -> Result<CanCluster, String> {
+        let can_cluster_name = self.get_required_item_name(
+            can_cluster, "CanCluster");
 
-        let can_cluster_conditional = can_cluster.get_sub_element(ElementName::CanClusterVariants)
-                        .and_then(|ccv| ccv.get_sub_element(ElementName::CanClusterConditional))?;
+        let can_cluster_conditional = self.get_required_sub_subelement(
+            can_cluster, 
+            ElementName::CanClusterVariants,
+            ElementName::CanClusterConditional);
 
-        let can_cluster_baudrate = can_cluster_conditional.get_sub_element(ElementName::Baudrate).and_then(|elem| elem.character_data())?;
+        //let can_cluster_baudrate =  self.get_required_subelement_int_value(
+        let can_cluster_baudrate =  self.get_optional_subelement_int_value(
+            &can_cluster_conditional,
+            ElementName::Baudrate);
         
-        let can_cluster_fd_baudrate = can_cluster_conditional.get_sub_element(ElementName::CanFdBaudrate).and_then(|elem| elem.character_data())?;
+        let can_cluster_fd_baudrate =  self.get_optional_subelement_int_value(
+            &can_cluster_conditional,
+            ElementName::CanFdBaudrate);
+
+        if can_cluster_baudrate == 0 && can_cluster_fd_baudrate == 0 {
+            let msg = format!("Baudrate and FD Baudrate of CanCluster {} do not exist or are 0. Skipping this CanCluster.", can_cluster_name);
+            return Err(msg.to_string());
+        }
 
         // iterate over PhysicalChannels and handle the CanFrameTriggerings inside them
-        for physical_channel in can_cluster_conditional.get_sub_element(ElementName::PhysicalChannels).map(|elem| {
+        /*for physical_channel in can_cluster_conditional.get_sub_element(ElementName::PhysicalChannels).map(|elem| {
             elem.sub_elements().filter(|se| se.element_name() == ElementName::CanPhysicalChannel)
         })? {
             if let Some(frame_triggerings) = physical_channel.get_sub_element(ElementName::FrameTriggerings) {
@@ -225,13 +355,22 @@ impl ArxmlParser {
                     self.handle_can_frame_triggering(&can_frame_triggering);
                 }
             }
-        }
+        }*/
 
-        Some(())
+        let can_cluster: CanCluster = CanCluster {
+            name: can_cluster_name,
+            baudrate: can_cluster_baudrate,
+            canfd_baudrate: can_cluster_fd_baudrate,
+            can_frame_triggerings: Vec::new()
+        };
+        
+        return Ok(can_cluster);
     }
 
     // Main parsing method. Uses autosar-data libray for parsing ARXML 
-    pub fn parse_file(&self, file_name: String) -> bool {
+    // In the future, it might be extended to support Etherneth, Flexray, ...
+    // Returns now a vector of CanCluster
+    pub fn parse_file(&self, file_name: String) -> Option<Vec<CanCluster>> {
         let start = Instant::now();
 
         let model = AutosarModel::new();
@@ -244,6 +383,8 @@ impl ArxmlParser {
         println!("[+] Duration of loading was: {:?}", start.elapsed());
         // DEBUG END
 
+        let mut can_clusters: Vec<CanCluster> = Vec::new();
+
         // Iterate over Autosar elements and handle CanCluster elements
         for element in model
             .identifiable_elements()
@@ -252,8 +393,11 @@ impl ArxmlParser {
         {
             match element.element_name() {
                 ElementName::CanCluster => {
-                    self.handle_can_cluster(&element);
-                    
+                    let result = self.handle_can_cluster(&element);
+                    match result {
+                        Ok(value) => can_clusters.push(value),
+                        Err(error) => println!("[-] WARNING: {}", error)
+                    }
                 }
                 _ => {}
             }
@@ -261,343 +405,20 @@ impl ArxmlParser {
 
         println!("[+] Duration of parsing: {:?}", start.elapsed());
 
-        return true;
-    }
-
-    // DEBUG To be removed
-    // Check depth of encountered XML element. Can be removed at a later stage
-    pub fn depth_check(&self, depth: i32, depth_expected: i32, name: &str, opening: bool) {
-        if depth != depth_expected && 1 == 2 { // watch out
-            if opening {
-                panic!("Error at package depth check for opening {}. Depth is {} but should be {}", name, depth, depth_expected);
-            } else {
-                panic!("Error at package depth check for closing {}. Depth is {} but should be {}", name, depth, depth_expected);
-            }
-        }
-    }
-    // DEBUG END
-
-    // OLD Main parsing method that is not used anymore. It is just kept until adaptation to autosar-data library is done. Requires a BufReader instance as argument. Parses Arxml structure and extract all values necessary for restbus simulation. 
-    pub fn parse_data(&self, xml_reader: BufReader<File>) -> bool {
-        println!("[+] Called ArxmlParser.parse_data");
-        println!("[+] Parsing Arxml from BufReader instance");
-
-        let start = Instant::now();
-
-        let mut can_clusters: Vec<CanCluster> = Vec::new();
-
-        let parser = EventReader::new(xml_reader);
-
-        // DEBUG
-        let mut count = 0;
-        // DEBUG END
-
-        let mut depth = 0; // 1 = autosar, 2 = ar-packages, 3 = ar-package/package
-
-        let mut targeted_packages: HashSet<String> = HashSet::new();
-        targeted_packages.insert("cluster".to_string());
-        targeted_packages.insert("frame".to_string());
-        targeted_packages.insert("pdu".to_string());
-
-        // FLAGS used for mainly detecting if we are inside of XML elements
-        // Usee hash set instead?
-        let mut skip_package: bool = false;
-        let mut inside_short_name: bool= false;
-        let mut inside_cluster: bool = false;
-        let mut inside_frame: bool= false;
-        let mut inside_pdu: bool= false;
-        let mut inside_can_cluster: bool = false;
-        let mut inside_baudrate: bool = false;
-        let mut inside_canfd_baudrate: bool = false;
-        let mut inside_can_frame_triggering: bool = false;
-        let mut inside_identifier: bool = false;
-        let mut inside_can_frame_tx_behavior: bool = false;
-        let mut inside_frame_ref: bool = false;
-        let mut inside_can_frame: bool = false;
-        let mut inside_frame_length: bool = false;
-        let mut inside_pdu_ref: bool = false;
-        let mut inside_pdu_element: bool = false;
-        let mut inside_cyclic_timing: bool = false;
-        let mut inside_time_period: bool = false;
-        let mut inside_value: bool = false;
-
-        // Temporary values to store CAN cluster data
-        let mut can_cluster_name: String = String::from(""); 
-        let mut can_cluster_baudrate: i32 = 0;
-        let mut can_cluster_canfd_baudrate: i32 = 0;
-        let mut can_cluster_sum_physical_channels: i32 = 0;
-        let mut can_frame_triggerings: Vec<CanFrameTriggering> = Vec::new();
-
-        // Temporary values to store CAN-Frame-Triggering data
-        let mut cft_frame_ref: String = String::from("");
-        let mut cft_identifier: String = String::from("");
-        let mut cft_is_canfd: bool = false;
-
-        // Temporary values to stare Can-Frame data
-        let mut frame_length: i8 = 0; 
-        let mut pdu_ref: String = String::from(""); 
-
-        // Store Can-Frame elements data
-        let mut can_frames: Vec<CanFrame> = Vec::new(); 
-        
-        // Temporary values for PDU element data
-        let mut pdu_type: String = String::from(""); 
-        let mut pdu_name: String = String::from("");
-        let mut pdu_cyclic: f32 = 0.0;
-        let mut pdu_data: Vec<u8> = Vec::new();
-        let mut pdu_data_length: i8 = 0;
-        let mut pdu_crc_offset: i8 = 0;
-        let mut pdu_counter_offset: i8 = 0;
-
-        let mut pdus: Vec<Pdu> = Vec::new();
-
-        // Iterate over XML using XMLEvents of xml-rs. Extract important values and references. Use these to fill structures. References will be resolved after this loop.
-        for event in parser {
-            // DEBUG
-            count += 1;
-            if count > 10000 && 2 == 1 {
-                println!("Done");
-                break;
-            }
-            // DEBUG END
-
-            match event {
-                Err(error) => {
-                    panic!("Error parsing XML event: {}", error);
-                }
-
-                Ok(XmlEvent::StartElement { name, .. }) => {
-                    depth += 1;
-
-                    match name.local_name.to_lowercase().as_str() {
-                        "autosar" => self.depth_check(depth, 1, "<autosar>", true),
-                        "ar-packages" => self.depth_check(depth, 2, "<ar-packages>", true),
-                        "ar-package" | "package" => self.depth_check(depth, 3, "<ar-package> or <package>", true),
-                        "can-cluster" => {
-                            self.depth_check(depth, 5, "<can-cluster>", true);
-                            if inside_cluster {
-                                inside_can_cluster = true;
-
-                                can_cluster_name = String::from(""); 
-                                can_cluster_baudrate = 0;
-                                can_cluster_canfd_baudrate = 0;
-                                can_cluster_sum_physical_channels = 0;
-                                can_frame_triggerings = Vec::new();
-                            }
-                        }
-                        "physical-channels" => can_cluster_sum_physical_channels += 1,
-                        "short-name" => inside_short_name = true,
-                        "baudrate" => inside_baudrate = true,
-                        "can-fd-baudrate" => inside_canfd_baudrate = true,
-                        "can-frame-triggering" => {
-                            inside_can_frame_triggering = true; 
-                            cft_frame_ref = String::from("");
-                            cft_identifier = String::from("");
-                            cft_is_canfd = false;
-                        }
-                        "identifier" => inside_identifier = true,
-                        "can-frame-tx-behavior" => inside_can_frame_tx_behavior = true,
-                        "frame-ref" => inside_frame_ref = true,
-                        "can-frame" => {
-                            inside_can_frame = true;
-
-                            frame_length = 0; 
-                            pdu_ref = String::from(""); 
-                        }
-                        "frame-length" => inside_frame_length = true,
-                        "pdu-ref" => inside_pdu_ref = true,
-                        "cyclic-timing" => inside_cyclic_timing = true,
-                        "time-period" => inside_time_period = true,
-                        "value" => inside_value = true,
-                        _ => {
-                            if inside_pdu && depth == 5 && name.local_name.to_lowercase().as_str().contains("pdu") {
-                                inside_pdu_element = true;
-                                pdu_type = name.local_name;
-                            }
-                        }
-                    };
-                }
-
-                Ok(XmlEvent::EndElement{ name }) => {
-                    depth -= 1;
-
-                    match name.local_name.to_lowercase().as_str() {
-                        "autosar" => self.depth_check(depth, 1, "<autosar>", false),
-                        "ar-packages" => self.depth_check(depth, 2, "<ar-packages>", false),
-                        "ar-package" | "package" => {
-                            self.depth_check(depth, 3, "<ar-package> or <package>", false);
-                            inside_cluster = false;
-                            inside_frame = false;
-                            inside_pdu = false;
-                            skip_package = false;
-                        }
-                        "can-cluster" => {
-                            self.depth_check(depth, 5, "<can-cluster>", false);
-                            inside_can_cluster = false;
-
-                            let mut can_cluster: CanCluster = CanCluster {
-                                name: can_cluster_name.to_string(),
-                                baudrate: can_cluster_baudrate,
-                                canfd_baudrate: can_cluster_canfd_baudrate,
-                                sum_physical_channels: can_cluster_sum_physical_channels,
-                                can_frame_triggerings: Vec::new()
-                            };
-
-                            can_cluster.can_frame_triggerings.append(&mut can_frame_triggerings);
-
-                            can_clusters.push(can_cluster);
-                        }
-                        "short-name" => inside_short_name = false,
-                        "baudrate" => inside_baudrate = false,
-                        "can-fd-baudrate" => inside_canfd_baudrate = false,
-                        "can-frame-triggering" => {
-                            inside_can_frame_triggering = false; 
-
-                            let can_frame_triggering: CanFrameTriggering = CanFrameTriggering {
-                                frame_ref: cft_frame_ref.to_string(),
-                                identifier: cft_identifier.to_string(),
-                                is_canfd: cft_is_canfd
-                            };
-
-                            can_frame_triggerings.push(can_frame_triggering); 
-                        }
-                        "identifier" => inside_identifier = false,
-                        "can-frame-tx-behavior" => inside_can_frame_tx_behavior = false,
-                        "frame-ref" => inside_frame_ref = false,
-                        "can-frame" => {
-                            inside_can_frame = false;
-
-                            let can_frame: CanFrame = CanFrame {
-                                frame_length: frame_length,
-                                pdu_ref: pdu_ref.to_string()
-                            };
-
-                            can_frames.push(can_frame);
-                        }
-                        "frame-length" => inside_frame_length = false,
-                        "pdu-ref" => inside_pdu_ref = false,
-                        "cyclic-timing" => inside_cyclic_timing = false,
-                        "time-period" => inside_time_period = false,
-                        "value" => inside_value = false,
-                        _ => {
-                            if inside_pdu && depth == 5 && name.local_name.to_lowercase().as_str() == pdu_type {
-                                inside_pdu_element = false;
-
-                                let pdu: Pdu = Pdu {
-                                    pdu_type: pdu_type,
-                                    name: pdu_name.to_string(),
-                                    cyclic: pdu_cyclic,
-                                    data: pdu_data.clone(),
-                                    data_length: pdu_data_length,
-                                    crc_offset: pdu_crc_offset,
-                                    counter_offset: pdu_counter_offset 
-                                };
-
-                                pdus.push(pdu);
-                                
-                                pdu_type = String::from("");
-                            }
-                        }
-                    };
-                }
-
-                Ok(XmlEvent::Characters( chars )) => {
-                    if !skip_package {
-                        if inside_short_name {
-                            if depth == 4 {
-                                let chars_lc = chars.to_lowercase().as_str().to_owned();
-                                if targeted_packages.contains(&chars_lc) {
-                                    // DEBUG
-                                    println!("Found package of interest: {}", chars);
-                                    // DEBUG END
-                                    if &chars_lc == "cluster"  {
-                                        inside_cluster = true;
-                                    } else if &chars_lc == "frame"  {
-                                        inside_frame = true;
-                                    } else if &chars_lc == "pdu"  {
-                                        inside_pdu = true;
-                                    }
-
-                                } else {
-                                    // DEBUG
-                                    println!("Found package not of interest: {}", chars);
-                                    // DEBUG END
-                                    skip_package = true;
-                                }
-                            } else if inside_can_cluster && depth == 6 {
-                                can_cluster_name = chars; 
-                            } else if inside_pdu && inside_pdu_element && depth == 6 {
-                                pdu_name = chars;
-                            }
-                        } else if inside_can_cluster {
-                            if inside_baudrate {
-                                can_cluster_baudrate = chars.parse::<i32>().unwrap();
-                            } else if inside_canfd_baudrate {
-                                can_cluster_canfd_baudrate = chars.parse::<i32>().unwrap();
-                            } else if inside_can_frame_triggering {
-                                if inside_identifier {
-                                    cft_identifier = chars; 
-                                } else if inside_can_frame_tx_behavior {
-                                    if chars.to_lowercase().as_str() == "can-fd" {
-                                        cft_is_canfd = true;
-                                    } 
-                                } else if inside_frame_ref {
-                                    cft_frame_ref = chars; 
-                                }
-                            }
-                        } else if inside_frame && inside_can_frame {
-                            if inside_frame_length {
-                                frame_length = chars.parse::<i8>().unwrap();
-                            } else if inside_pdu_ref {
-                                pdu_ref = chars;
-                            }
-                        } else if inside_pdu && inside_pdu_element {
-                            if inside_cyclic_timing && inside_time_period && inside_value {
-                                pdu_cyclic = chars.parse::<f32>().unwrap();
-                            }     
-                        }
-                    }
-                }
-
-                _ => {}
-            }
-        }
-        
-        // Resolve references and finalize structures
-        // TODO
-        
-
-        // DEBUG
-        println!("Got {} can-clusters", can_clusters.len());
-        for can_cluster in can_clusters {
-            println!("****");
-            println!("Can-clusters -> name: {}, baudrate: {}, canfd_baudrate: {}, sum_physical_channels: {}", 
-            can_cluster.name, can_cluster.baudrate, can_cluster.canfd_baudrate, can_cluster.sum_physical_channels);
-            println!("Frames:");
-            for can_frame_triggering in can_cluster.can_frame_triggerings {
-                println!("Identifier: {}, is_canfd: {}, frame-ref: {}", can_frame_triggering.identifier, can_frame_triggering.is_canfd, can_frame_triggering.frame_ref);
-            }
-            println!("****");
-        }
-
-        let mut count = 0;
-        for can_frame in can_frames {
-            println!("CanFrame {} -> frame_length: {}, pdu_ref: {}", count, can_frame.frame_length, can_frame.pdu_ref); 
-            count += 1;
-            if count == 3 {
-                break;
-            }
-        }
-        // DEBUG END
-
-        // warum cluster not of interest?
-        
-        println!("[+] Parsing done. Duration of parsing was: {:?}", start.elapsed());
-
-        return true;
+        return Some(can_clusters);
     }
 }
 
+fn test_data(can_clusters: Vec<CanCluster>) -> bool {
+    for cluster in can_clusters {
+        println!("Got CAN Cluster:");
+        println!("\tCluster name: {}", cluster.name);
+        println!("\tBaudrate: {}", cluster.baudrate);
+        println!("\tFD Baudrate: {}", cluster.canfd_baudrate);
+    }
+
+    return true;
+}
 
 fn main() {
     println!("[+] Starting openDuT ARXML parser over main method.");
@@ -606,6 +427,12 @@ fn main() {
 
     let arxml_parser: ArxmlParser = ArxmlParser {};
 
-    arxml_parser.parse_file(file_name.to_string());
+    if let Some(can_clusters) = arxml_parser
+        .parse_file(file_name.to_string()) 
+    {
+        test_data(can_clusters);
+    } else {
+        panic!("Parsing failed.")
+    }
 }
 
