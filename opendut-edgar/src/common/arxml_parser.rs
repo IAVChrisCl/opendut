@@ -10,18 +10,13 @@ use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
 
 /* 
 - TODO: 
-    - finish parsing
-    - move strucutures to separate file and import them
-    - resolve references
-    - create restbus simulation based on parsed data in a differenc source code file
+    - finish parsing and fill up structures 
+    - create restbus simulation based on parsed data in a different source code file
 
 - Improvements at some stage:
+    - Provide options to store parsed data for quicker restart
+    - Put structure defintions in separete source code file
     - be able to manually add stuff to restbus -> provide interface
-    - Use hash maps for quicker reference resolving
-    - Use hash maps or precalulcated hashes for XML element flag setting
-    - increase parsing speed by skipping ar-packages not of interest -> No success 
-    - support multiple can-cluster variants and physical channels
-    - Currently using xml-rs. Use quick_xml when applicable
 
 - Code inside DEBUG comments will be removed at a later stage
 */
@@ -50,8 +45,16 @@ pub struct CanFrameTriggering {
 }
 
 pub struct PDUMapping {
+    name: String,
+    byte_order: String,
+    start_position: i64,
+    length: i64,
+    dynamic_length: String,
+    category: String,
+    contained_header_id_short: String,
+    contained_header_id_long: String
 }
-
+         
 // Parser structure
 pub struct ArxmlParser {
 }
@@ -115,7 +118,7 @@ impl ArxmlParser {
             .and_then(|cdata| self.decode_integer(&cdata));
     } 
 
-    fn get_required_subelement_int_value(&self, element: &Element, subelement_name: ElementName) -> i64 {
+    fn get_required_int_value(&self, element: &Element, subelement_name: ElementName) -> i64 {
         if let Some(int_value) = self.get_subelement_int_value(element, subelement_name) {
             return int_value;
         } else {
@@ -123,7 +126,7 @@ impl ArxmlParser {
         }
     }
 
-    fn get_optional_subelement_int_value(&self, element: &Element, subelement_name: ElementName) -> i64 {
+    fn get_optional_int_value(&self, element: &Element, subelement_name: ElementName) -> i64 {
         if let Some(int_value) = self.get_subelement_int_value(element, subelement_name) {
             return int_value;
         } else {
@@ -142,13 +145,36 @@ impl ArxmlParser {
         panic!("Error getting required reference for {}", subelement_name);
     }
 
-    fn get_optional_string(&self, element: &Element, subelement_name: ElementName) -> String {
-        if let Some(value) = element 
+    fn get_subelement_string_value(&self, element: &Element, subelement_name: ElementName) -> Option<String> {
+        return element 
             .get_sub_element(subelement_name)
+            .and_then(|elem| elem.character_data())
+            .map(|cdata| cdata.to_string());
+    }
+
+    fn get_required_string(&self, element: &Element, subelement_name: ElementName) -> String {
+        if let Some(value) = self.get_subelement_string_value(element, subelement_name) {
+            return value;
+        } else {
+            panic!("Error getting required String value of {}", subelement_name);
+        }
+    }
+    
+    fn get_optional_string(&self, element: &Element, subelement_name: ElementName) -> String {
+        if let Some(value) = self.get_subelement_string_value(element, subelement_name) {
+            return value;
+        } else {
+            return String::from("");
+        }
+    }
+
+    fn get_subelement_optional_string(&self, element: &Element, subelement_name: ElementName, sub_subelement_name: ElementName) -> String {
+        if let Some(value) = element.get_sub_element(subelement_name)
+            .and_then(|elem| elem.get_sub_element(sub_subelement_name))
             .and_then(|elem| elem.character_data())
             .map(|cdata| cdata.to_string()) 
         {
-            return value;
+            return value;     
         } else {
             return String::from("");
         }
@@ -244,33 +270,36 @@ impl ArxmlParser {
 
     }*/
 
-    /*fn handle_pdu_mapping(&self, pdu_mapping: &Element) -> Option<()> {
-        let pdu = pdu_mapping
-            .get_sub_element(ElementName::PduRef)
-            .and_then(|pduref| pduref.get_reference_target().ok())?;
+    fn handle_pdu_mapping(&self, pdu_mapping: &Element) -> Result<PDUMapping, String> {
+        let pdu = self.get_required_reference(
+            pdu_mapping,
+            ElementName::PduRef);
+        
+        let pdu_name = self.get_required_item_name(
+            &pdu, "Pdu");
 
-        let pdu_name = pdu.item_name()?; 
+        let byte_order = self.get_required_string(pdu_mapping, 
+            ElementName::PackingByteOrder);
 
-        let byte_order = pdu_mapping
-            .get_sub_element(ElementName::PackingByteOrder)
-            .and_then(|elem| elem.character_data())
-            .map(|cdata| cdata.to_string());
+        let start_position = self.get_required_int_value(pdu_mapping, 
+            ElementName::StartPosition);
 
-        let start_position = pdu_mapping
-            .get_sub_element(ElementName::StartPosition)
-            .and_then(|elem| elem.character_data())
-            .and_then(|cdata| cdata.unsigned_integer_value());
+        let pdu_length = self.get_required_int_value(&pdu, 
+            ElementName::Length);
+        
+        let pdu_dynamic_length = self.get_optional_string(&pdu, 
+            ElementName::HasDynamicLength);
+        
+        let pdu_category = self.get_optional_string(&pdu, 
+            ElementName::Category);
+        
+        let pdu_contained_header_id_short = self.get_subelement_optional_string(&pdu, 
+            ElementName::ContainedIPduProps, ElementName::HeaderIdShortHeader);
+        
+        let pdu_contained_header_id_long = self.get_subelement_optional_string(&pdu, 
+            ElementName::ContainedIPduProps, ElementName::HeaderIdLongHeader);
 
-        let pdu_length = pdu
-            .get_sub_element(ElementName::Length)
-            .and_then(|elem| elem.character_data())
-            .and_then(|cdata| cdata.unsigned_integer_value());
-
-        let pdu_dynamic_length = pdu
-            .get_sub_element(ElementName::HasDynamicLength)
-            .and_then(|elem| elem.character_data());
-
-        match pdu.element_name() {
+        /*match pdu.element_name() {
             ElementName::ISignalIPdu => {
                 self.handle_isignal_ipdu(&pdu);
             }
@@ -293,16 +322,27 @@ impl ArxmlParser {
             _ => {
                 panic!("PDU type not supported.")
             }
-        }
+        }*/
 
-        Some(())
-    }*/
+        let pdu_mapping: PDUMapping = PDUMapping {
+            name: pdu_name,
+            byte_order: byte_order,
+            start_position: start_position,
+            length: pdu_length,
+            dynamic_length: pdu_dynamic_length,
+            category: pdu_category,
+            contained_header_id_short: pdu_contained_header_id_short,
+            contained_header_id_long: pdu_contained_header_id_long 
+        };
+
+        return Ok(pdu_mapping);     
+    }
 
     fn handle_can_frame_triggering(&self, can_frame_triggering: &Element) -> Result<CanFrameTriggering, String> {
         let can_frame_triggering_name= self.get_required_item_name(
             can_frame_triggering, "CanFrameTriggering");
 
-        let can_id = self.get_required_subelement_int_value(
+        let can_id = self.get_required_int_value(
             &can_frame_triggering,
             ElementName::Identifier);
 
@@ -330,16 +370,21 @@ impl ArxmlParser {
             can_frame_triggering,
             ElementName::CanFrameTxBehavior);
 
-        let frame_length = self.get_optional_subelement_int_value(
+        let frame_length = self.get_optional_int_value(
             &frame,
             ElementName::FrameLength);
 
+        let mut pdu_mappings_vec: Vec<PDUMapping> = Vec::new();
+
         // assign here and other similar variable?
-        /*if let Some(mappings) = frame.get_sub_element(ElementName::PduToFrameMappings) {
+        if let Some(mappings) = frame.get_sub_element(ElementName::PduToFrameMappings) {
             for pdu_mapping in mappings.sub_elements() {
-                self.handle_pdu_mapping(&pdu_mapping);
+                match self.handle_pdu_mapping(&pdu_mapping) {
+                    Ok(value) => pdu_mappings_vec.push(value),
+                    Err(error) => return Err(error) 
+                }
             }
-        }*/ 
+        }
 
         let can_frame_triggering_struct: CanFrameTriggering = CanFrameTriggering {
             frame_triggering_name: can_frame_triggering_name,
@@ -349,7 +394,7 @@ impl ArxmlParser {
             frame_rx_behavior: frame_rx_behavior,
             frame_tx_behavior: frame_tx_behavior,
             frame_length: frame_length,
-            pdu_mappings: Vec::new() 
+            pdu_mappings: pdu_mappings_vec 
         };
  
         return Ok(can_frame_triggering_struct);
@@ -365,11 +410,11 @@ impl ArxmlParser {
             ElementName::CanClusterConditional);
 
         //let can_cluster_baudrate =  self.get_required_subelement_int_value(
-        let can_cluster_baudrate =  self.get_optional_subelement_int_value(
+        let can_cluster_baudrate =  self.get_optional_int_value(
             &can_cluster_conditional,
             ElementName::Baudrate);
         
-        let can_cluster_fd_baudrate =  self.get_optional_subelement_int_value(
+        let can_cluster_fd_baudrate =  self.get_optional_int_value(
             &can_cluster_conditional,
             ElementName::CanFdBaudrate);
 
@@ -458,18 +503,28 @@ impl ArxmlParser {
 // Debug output. Code can be later reused with modificaitons in Restbus Simulaiton setup
 fn test_data(can_clusters: Vec<CanCluster>) -> bool {
     for cluster in can_clusters {
-        println!("Got CAN Cluster:");
-        println!("\tCluster name: {}", cluster.name);
+        println!("Cluster: {}", cluster.name);
         println!("\tBaudrate: {}", cluster.baudrate);
         println!("\tFD Baudrate: {}", cluster.canfd_baudrate);
         for can_frame_triggering in cluster.can_frame_triggerings {
-            println!("\tGot CanFrameTriggering: {}", can_frame_triggering.frame_triggering_name);
-            println!("\t\tFrame name: {}", can_frame_triggering.frame_name);
+            println!("\tCanFrameTriggering: {}", can_frame_triggering.frame_triggering_name);
+            println!("\t\tFrame Name: {}", can_frame_triggering.frame_name);
             println!("\t\tCAN ID: {}", can_frame_triggering.can_id);
-            println!("\t\tAddressing mode: {}", can_frame_triggering.addressing_mode);
-            println!("\t\tFrame RX behavior: {}", can_frame_triggering.frame_rx_behavior);
-            println!("\t\tFrame TX behavior: {}", can_frame_triggering.frame_tx_behavior);
-            println!("\t\tFrame length: {}", can_frame_triggering.frame_length);
+            println!("\t\tAddressing Mode: {}", can_frame_triggering.addressing_mode);
+            println!("\t\tFrame RX Behavior: {}", can_frame_triggering.frame_rx_behavior);
+            println!("\t\tFrame TX Behavior: {}", can_frame_triggering.frame_tx_behavior);
+            println!("\t\tFrame Length: {}", can_frame_triggering.frame_length);
+            for pdu_mapping in can_frame_triggering.pdu_mappings {
+                println!("\t\tPDUMapping: {}", pdu_mapping.name);
+                println!("\t\t\tByte Order: {}", pdu_mapping.byte_order);
+                println!("\t\t\tStart Position: {}", pdu_mapping.start_position);
+                println!("\t\t\tLength: {}", pdu_mapping.length);
+                println!("\t\t\tDynamic Length: {}", pdu_mapping.dynamic_length);
+                println!("\t\t\tCategory: {}", pdu_mapping.category);
+                println!("\t\t\tContained Header ID Short: {}", pdu_mapping.contained_header_id_short);
+                println!("\t\t\tContained Header ID Long: {}", pdu_mapping.contained_header_id_long);
+
+            }
         }
     }
 
