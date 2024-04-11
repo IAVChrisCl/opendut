@@ -1,7 +1,7 @@
 use core::panic;
 use std::time::Instant;
 
-use autosar_data::{AutosarModel, CharacterData, Element, ElementName};
+use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
 
 /*
 - Arxml parser that is able to extract all values necessary for a restbus simulation
@@ -39,13 +39,17 @@ pub struct CanCluster {
     can_frame_triggerings: Vec<CanFrameTriggering>
 }
 pub struct CanFrameTriggering {
-    frame_trigger_name: String,
+    frame_triggering_name: String,
     frame_name: String,
     can_id: i64,
-    addressing_mode: u16,
+    addressing_mode: String,
     frame_rx_behavior: String,
     frame_tx_behavior: String,
-    frame_length: i64
+    frame_length: i64,
+    pdu_mappings: Vec<PDUMapping>
+}
+
+pub struct PDUMapping {
 }
 
 // Parser structure
@@ -126,7 +130,29 @@ impl ArxmlParser {
             return 0;
         }
     }
-    
+
+    fn get_required_reference(&self, element: &Element, subelement_name: ElementName) -> Element {
+        if let Some(subelement) = element.get_sub_element(subelement_name) {
+            match subelement.get_reference_target() {
+                Ok(reference) => return reference,
+                Err(_) => {} 
+            }
+        }
+        
+        panic!("Error getting required reference for {}", subelement_name);
+    }
+
+    fn get_optional_string(&self, element: &Element, subelement_name: ElementName) -> String {
+        if let Some(value) = element 
+            .get_sub_element(subelement_name)
+            .and_then(|elem| elem.character_data())
+            .map(|cdata| cdata.to_string()) 
+        {
+            return value;
+        } else {
+            return String::from("");
+        }
+    }
 
     /*fn handle_isignal_ipdu(&self, pdu: &Element){
         // Find out these values: ...
@@ -272,56 +298,62 @@ impl ArxmlParser {
         Some(())
     }*/
 
-    /*fn handle_can_frame_triggering(&self, can_frame_triggering: &Element) -> Option<()> {
-        // implement method extarcing element cdata
-        let can_frame_triggering_name = can_frame_triggering
-            .item_name();
+    fn handle_can_frame_triggering(&self, can_frame_triggering: &Element) -> Result<CanFrameTriggering, String> {
+        let can_frame_triggering_name= self.get_required_item_name(
+            can_frame_triggering, "CanFrameTriggering");
 
-        let can_id = &can_frame_triggering
-            .get_sub_element(ElementName::Identifier)
-            .and_then(|elem| elem.character_data())
-            .and_then(|cdata| cdata.unsigned_integer_value());
+        let can_id = self.get_required_subelement_int_value(
+            &can_frame_triggering,
+            ElementName::Identifier);
 
-        let frame = can_frame_triggering
-            .get_sub_element(ElementName::FrameRef)?
-            .get_reference_target()
-            .ok()?;
+        let frame = self.get_required_reference(
+            can_frame_triggering,
+            ElementName::FrameRef);
 
-        let frame_name = frame.item_name();
+        let frame_name = self.get_required_item_name(
+            &frame, "Frame");
 
         let addressing_mode = if let Some(CharacterData::Enum(value)) = can_frame_triggering
             .get_sub_element(ElementName::CanAddressingMode)
             .and_then(|elem| elem.character_data()) 
         {
-            value
+            value.to_string()
         } else {
-            EnumItem::Standard
+            EnumItem::Standard.to_string()
         };
 
-        let frame_rx_behavior = can_frame_triggering
-            .get_sub_element(ElementName::CanFrameRxBehavior)
-            .and_then(|elem| elem.character_data())
-            .map(|cdata| cdata.to_string());
+        let frame_rx_behavior = self.get_optional_string(
+            can_frame_triggering,
+            ElementName::CanFrameRxBehavior);
+        
+        let frame_tx_behavior = self.get_optional_string(
+            can_frame_triggering,
+            ElementName::CanFrameTxBehavior);
 
-        let frame_tx_behavior = can_frame_triggering
-            .get_sub_element(ElementName::CanFrameTxBehavior)
-            .and_then(|elem| elem.character_data())
-            .map(|cdata| cdata.to_string());
-
-        let frame_length = frame
-            .get_sub_element(ElementName::FrameLength)
-            .and_then(|elem| elem.character_data())
-            .and_then(|cdata| cdata.unsigned_integer_value());
+        let frame_length = self.get_optional_subelement_int_value(
+            &frame,
+            ElementName::FrameLength);
 
         // assign here and other similar variable?
-        if let Some(mappings) = frame.get_sub_element(ElementName::PduToFrameMappings) {
+        /*if let Some(mappings) = frame.get_sub_element(ElementName::PduToFrameMappings) {
             for pdu_mapping in mappings.sub_elements() {
                 self.handle_pdu_mapping(&pdu_mapping);
             }
-        } 
+        }*/ 
 
-        Some(())
-    }*/
+        let can_frame_triggering_struct: CanFrameTriggering = CanFrameTriggering {
+            frame_triggering_name: can_frame_triggering_name,
+            frame_name: frame_name,
+            can_id: can_id,
+            addressing_mode: addressing_mode,
+            frame_rx_behavior: frame_rx_behavior,
+            frame_tx_behavior: frame_tx_behavior,
+            frame_length: frame_length,
+            pdu_mappings: Vec::new() 
+        };
+ 
+        return Ok(can_frame_triggering_struct);
+    }
 
     fn handle_can_cluster(&self, can_cluster: &Element) -> Result<CanCluster, String> {
         let can_cluster_name = self.get_required_item_name(
@@ -347,24 +379,38 @@ impl ArxmlParser {
         }
 
         // iterate over PhysicalChannels and handle the CanFrameTriggerings inside them
-        /*for physical_channel in can_cluster_conditional.get_sub_element(ElementName::PhysicalChannels).map(|elem| {
-            elem.sub_elements().filter(|se| se.element_name() == ElementName::CanPhysicalChannel)
-        })? {
+        let physical_channels;
+        if let Some(value) = can_cluster_conditional
+            .get_sub_element(ElementName::PhysicalChannels).map(|elem| {
+                elem.sub_elements().filter(|se| se.element_name() == ElementName::CanPhysicalChannel)
+            }) 
+        {
+            physical_channels = value;
+        } else {
+            let msg = format!("Cannot handle physical channels of CanCluster {}", can_cluster_name);
+            return Err(msg.to_string());
+        }
+
+        let mut can_frame_triggerings: Vec<CanFrameTriggering> = Vec::new(); 
+        for physical_channel in physical_channels {
             if let Some(frame_triggerings) = physical_channel.get_sub_element(ElementName::FrameTriggerings) {
                 for can_frame_triggering in frame_triggerings.sub_elements() {
-                    self.handle_can_frame_triggering(&can_frame_triggering);
+                    match self.handle_can_frame_triggering(&can_frame_triggering) {
+                        Ok(value) => can_frame_triggerings.push(value),
+                        Err(error) => return Err(error)
+                    }
                 }
             }
-        }*/
+        }
 
-        let can_cluster: CanCluster = CanCluster {
+        let can_cluster_struct: CanCluster = CanCluster {
             name: can_cluster_name,
             baudrate: can_cluster_baudrate,
             canfd_baudrate: can_cluster_fd_baudrate,
-            can_frame_triggerings: Vec::new()
+            can_frame_triggerings: can_frame_triggerings
         };
         
-        return Ok(can_cluster);
+        return Ok(can_cluster_struct);
     }
 
     // Main parsing method. Uses autosar-data libray for parsing ARXML 
@@ -409,12 +455,22 @@ impl ArxmlParser {
     }
 }
 
+// Debug output. Code can be later reused with modificaitons in Restbus Simulaiton setup
 fn test_data(can_clusters: Vec<CanCluster>) -> bool {
     for cluster in can_clusters {
         println!("Got CAN Cluster:");
         println!("\tCluster name: {}", cluster.name);
         println!("\tBaudrate: {}", cluster.baudrate);
         println!("\tFD Baudrate: {}", cluster.canfd_baudrate);
+        for can_frame_triggering in cluster.can_frame_triggerings {
+            println!("\tGot CanFrameTriggering: {}", can_frame_triggering.frame_triggering_name);
+            println!("\t\tFrame name: {}", can_frame_triggering.frame_name);
+            println!("\t\tCAN ID: {}", can_frame_triggering.can_id);
+            println!("\t\tAddressing mode: {}", can_frame_triggering.addressing_mode);
+            println!("\t\tFrame RX behavior: {}", can_frame_triggering.frame_rx_behavior);
+            println!("\t\tFrame TX behavior: {}", can_frame_triggering.frame_tx_behavior);
+            println!("\t\tFrame length: {}", can_frame_triggering.frame_length);
+        }
     }
 
     return true;
