@@ -1,5 +1,6 @@
 use core::panic;
 use std::time::Instant;
+use std::collections::HashMap;
 
 use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
 
@@ -54,7 +55,47 @@ pub struct PDUMapping {
     contained_header_id_short: String,
     contained_header_id_long: String
 }
-         
+
+pub struct ISignalIPDU {
+    cyclic_timing_period_value: f64,
+    cyclic_timing_period_tolerance: Option<TimeRangeTolerance>,
+    cyclic_timing_offset_value: f64,
+    cyclic_timing_offset_tolerance: Option<TimeRangeTolerance>,
+    number_of_repetitions: i64,
+    repetition_period_value: f64,
+    repetition_period_tolerance: Option<TimeRangeTolerance>,
+    ungrouped_signals: Vec<ISignal>,
+    grouped_signals: Vec<ISignalGroup>
+}
+
+pub struct ISignal {
+    name: String,
+    start_pos: i64,
+    length: i64
+}
+
+pub struct E2EDataTransformationProps {
+    transformer_name: String,
+    data_id: i64,
+    data_length: i64
+}
+
+pub struct ISignalGroup {
+    name: String,
+    isignals: Vec<ISignal>,
+    data_transformation: Vec<String>,
+    transformation_props: Vec<E2EDataTransformationProps>
+}
+
+enum TimeRangeTolerance {
+    Relative(i64),
+    Absolute(f64),
+}
+
+struct TimeRange {
+    tolerance: Option<TimeRangeTolerance>,
+    value: f64,
+}    
 // Parser structure
 pub struct ArxmlParser {
 }
@@ -88,6 +129,30 @@ impl ArxmlParser {
         } else {
             None
         }
+    }
+
+    fn get_time_range(&self, base: &Element) -> Option<TimeRange> {
+        let value = base
+            .get_sub_element(ElementName::Value)
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| cdata.double_value())?;
+    
+        let tolerance = if let Some(absolute_tolerance) = base
+            .get_sub_element(ElementName::AbsoluteTolerance)
+            .and_then(|elem| elem.get_sub_element(ElementName::Absolute))
+            .and_then(|elem| elem.character_data())
+            .and_then(|cdata| cdata.double_value())
+        {
+            Some(TimeRangeTolerance::Absolute(absolute_tolerance))
+        } else {
+            base.get_sub_element(ElementName::RelativeTolerance)
+                .and_then(|elem| elem.get_sub_element(ElementName::Relative))
+                .and_then(|elem| elem.character_data())
+                .and_then(|cdata| self.decode_integer(&cdata))
+                .map(TimeRangeTolerance::Relative)
+        };
+    
+        Some(TimeRange { tolerance, value })
     }
 
     fn get_required_item_name(&self, element: &Element, element_name: &str) -> String {
@@ -180,78 +245,213 @@ impl ArxmlParser {
         }
     }
 
-    /*fn handle_isignal_ipdu(&self, pdu: &Element){
+    fn handle_isignal_ipdu(&self, pdu: &Element) -> Option<ISignalIPDU> {
         // Find out these values: ...
+        let mut cyclic_timing_period_value: f64 = 0_f64;
+        let mut cyclic_timing_period_tolerance: Option<TimeRangeTolerance> = None; 
 
-        if let Some(tx_mode_true_timing) = pdu
+        let mut cyclic_timing_offset_value: f64 = 0_f64;
+        let mut cyclic_timing_offset_tolerance: Option<TimeRangeTolerance> = None;
+                
+        let mut number_of_repetitions: i64 = 0;
+        let mut repetition_period_value: f64 = 0_f64;
+        let mut repetition_period_tolerance: Option<TimeRangeTolerance> = None;
+
+               
+        let tx_mode_true_timing = pdu
             .get_sub_element(ElementName::IPduTimingSpecifications)
             .and_then(|elem| elem.get_sub_element(ElementName::IPduTiming))
             .and_then(|elem| elem.get_sub_element(ElementName::TransmissionModeDeclaration))
-            .and_then(|elem| elem.get_sub_element(ElementName::TransmissionModeTrueTiming))
-        {
-            if let Some(cyclic_timing) = tx_mode_true_timing
+            .and_then(|elem| elem.get_sub_element(ElementName::TransmissionModeTrueTiming))?;
+
+        if let Some(cyclic_timing) = tx_mode_true_timing
                 .get_sub_element(ElementName::CyclicTiming) 
+        {
+            // Time period 
+            if let Some(time_range) = cyclic_timing
+                .get_sub_element(ElementName::TimePeriod)
+                .and_then(|elem| self.get_time_range(&elem)) 
             {
-                if let Some(TimeRange { tolerance, value }) = cyclic_timing
-                    .get_sub_element(ElementName::TimePeriod)
-                    .and_then(|elem| get_time_range(&elem))
-                {
-                    let cyclic_timing_value = value;
-                    match tolerance {
-                        Some(TimeRangeTolerance::Absolute(absval)) => {
-                            let cyclic_timing_tolerance_absolute = absval; // in seconds
-                        }
-                        Some(TimeRangeTolerance::Relative(relval)) => {
-                            let cyclic_timing_tolerance_relative = relval; // in %
-                        }
-                        _ => {}
-                    }
-
-                    if let Some(TimeRange { tolerance, value }) = cyclic_timing
-                        .get_sub_element(ElementName::TimeOffset)
-                        .and_then(|elem| get_time_range(&elem))
-                    {
-                        let cyclic_timing_offset_value = value;
-                        match tolerance {
-                            Some(TimeRangeTolerance::Absolute(absval)) => {
-                                let cyclic_timing_offset_tolerance_absolute = absval; // in seconds
-                            }
-                            Some(TimeRangeTolerance::Relative(relval)) => {
-                                let cyclic_timing_offset_tolerance_relative = relval; // in seconds
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+                cyclic_timing_period_value = time_range.value;
+                cyclic_timing_period_tolerance = time_range.tolerance;
             }
 
-            if let Some(event_timing) = tx_mode_true_timing.get_sub_element(ElementName::EventControlledTiming) {
-                if let Some(num_reps) = event_timing
-                    .get_sub_element(ElementName::NumberOfRepetitions)
-                    .and_then(|elem| elem.character_data())
-                    .and_then(|cdata| decode_integer(&cdata))
-                {
-                    let number_of_repetitions = num_reps;
-                }
-                if let Some(repetition_period) = event_timing.get_sub_element(ElementName::RepetitionPeriod) {
-                    if let Some(TimeRange { tolerance, value }) = get_time_range(&repetition_period) {
-                        let repetition_period = value;
-                        if let Some(tol) = tolerance {
-                            match tol {
-                                TimeRangeTolerance::Relative(percent) => {
-                                    let repetition_period_tolerance_relative = percent;
-                                }
-                                TimeRangeTolerance::Absolute(abstol) => {
-                                    let repetition_period_tolerance_absoulte = abstol;
-                                }
-                            }
-                        }
-                    }
-                }
+            // Time offset
+            if let Some(time_range) = cyclic_timing
+                .get_sub_element(ElementName::TimeOffset)
+                .and_then(|elem| self.get_time_range(&elem)) 
+            {
+                cyclic_timing_offset_value = time_range.value;
+                cyclic_timing_offset_tolerance = time_range.tolerance;
             }
-
-            // Continue and handle signals
         }
+
+        if let Some(event_timing) = tx_mode_true_timing
+            .get_sub_element(ElementName::EventControlledTiming) 
+        {
+            number_of_repetitions = self.get_optional_int_value(&event_timing, 
+                ElementName::NumberOfRepetitions);
+            
+            if let Some(time_range) = event_timing 
+                .get_sub_element(ElementName::RepetitionPeriod)
+                .and_then(|elem| self.get_time_range(&elem)) 
+            {
+                    repetition_period_value = time_range.value;
+                    repetition_period_tolerance = time_range.tolerance;
+            }
+        }
+
+        //let mut signals: HashMap<String, (String, Option<i64>, Option<i64>)> = HashMap::new();
+        let mut signals: HashMap<String, (String, i64, i64)> = HashMap::new();
+        let mut signal_groups = Vec::new();
+
+        if let Some(isignal_to_pdu_mappings) = pdu.get_sub_element(ElementName::ISignalToPduMappings) {
+            // collect information about the signals and signal groups
+            for mapping in isignal_to_pdu_mappings.sub_elements() {
+                if let Some(signal) = mapping
+                    .get_sub_element(ElementName::ISignalRef)
+                    .and_then(|elem| elem.get_reference_target().ok())
+                {
+                    let refpath = self.get_required_string(&mapping, 
+                        ElementName::ISignalRef);
+
+                    let name = self.get_required_item_name(&signal, "ISignalRef");
+
+                    let start_pos = self.get_required_int_value(&mapping, 
+                        ElementName::StartPosition);
+                    
+                    let length = self.get_required_int_value(&signal, 
+                        ElementName::Length);
+                    
+                    signals.insert(refpath, (name, start_pos, length));
+                } else if let Some(signal_group) = mapping
+                    .get_sub_element(ElementName::ISignalGroupRef)
+                    .and_then(|elem| elem.get_reference_target().ok())
+                {
+                    // store the signal group for now
+                    signal_groups.push(signal_group);
+                }
+            }
+        }
+    
+        let mut grouped_signals: Vec<ISignalGroup> = Vec::new();
+
+        for signal_group in &signal_groups {
+            let group_name = self.get_required_item_name(&signal_group, "ISignalGroupRef"); 
+            
+            let mut signal_group_signals: Vec<ISignal> = Vec::new();
+
+            let isignal_refs = signal_group.get_sub_element(ElementName::ISignalRefs)?;
+
+            // Removing ok and needed?
+            for isignal_ref in isignal_refs.sub_elements()
+                .filter(|elem| elem.element_name() == ElementName::ISignalRef) {
+                if let Some(CharacterData::String(path)) = isignal_ref.character_data() {
+                    if let Some(siginfo) = signals.get(&path) {
+                        let mut siginfo_tmp = siginfo.clone();
+                        let isginal_tmp: ISignal = ISignal {
+                            name: siginfo_tmp.0,
+                            start_pos: siginfo.1,
+                            length: siginfo.2 
+                        };
+
+                        signal_group_signals.push(isginal_tmp);
+                        signals.remove(&path);
+                    }
+                }
+            }
+
+            let mut data_transformations: Vec<String> = Vec::new();
+
+            if let Some(com_transformations) = signal_group
+                .get_sub_element(ElementName::ComBasedSignalGroupTransformations) 
+            {
+                for elem in com_transformations.sub_elements() {
+                    let data_transformation = self.get_required_reference(&elem,
+                        ElementName::DataTransformationRef);
+                    
+                    data_transformations.push(self.get_required_item_name(
+                            &data_transformation,
+                            "DataTransformation"));
+                }
+            }
+
+            let mut props_vector: Vec<E2EDataTransformationProps> = Vec::new();
+
+            if let Some(transformation_props) = signal_group.get_sub_element(ElementName::TransformationISignalPropss) {
+                for e2exf_props in transformation_props
+                    .sub_elements()
+                    .filter(|elem| elem.element_name() == ElementName::EndToEndTransformationISignalProps)
+                {
+                    if let Some(e2exf_props_cond) = e2exf_props
+                        .get_sub_element(ElementName::EndToEndTransformationISignalPropsVariants)
+                        .and_then(|elem| elem.get_sub_element(ElementName::EndToEndTransformationISignalPropsConditional))
+                    {
+                        let transformer_reference = self.get_required_reference(&e2exf_props_cond, 
+                            ElementName::TransformerRef);
+                        
+                        let transformer_name = self.get_required_item_name(&transformer_reference, 
+                            "TransformerName");
+
+                        let data_ids = e2exf_props_cond
+                            .get_sub_element(ElementName::DataIds)?;
+
+                        let data_id = self.get_required_int_value(&data_ids,
+                            ElementName::DataId);
+                        
+                        let data_length = self.get_required_int_value(&e2exf_props_cond,
+                            ElementName::DataLength);
+                        
+                        
+                        let props_struct: E2EDataTransformationProps = E2EDataTransformationProps {
+                            transformer_name: transformer_name,
+                            data_id: data_id,
+                            data_length: data_length 
+                        };
+
+                        props_vector.push(props_struct);
+                    }
+                }
+            }
+
+            let mut isignal_group_struct: ISignalGroup = ISignalGroup {
+                name: group_name,
+                isignals: signal_group_signals,
+                data_transformation: data_transformations,
+                transformation_props: props_vector 
+            };
+
+            grouped_signals.push(isignal_group_struct);
+        }
+
+        // fill
+        let mut ungrouped_signals: Vec<ISignal> = Vec::new();
+
+        let remaining_signals: Vec<(String, i64, i64)> = signals.values().cloned().collect();
+        if remaining_signals.len() > 0 {
+            for (name, start_pos, length) in remaining_signals {
+                let isignal_struct: ISignal = ISignal {
+                    name: name,
+                    start_pos: start_pos,
+                    length: length
+                };
+                ungrouped_signals.push(isignal_struct);
+            }
+        }
+            
+        let isginal_ipdu: ISignalIPDU = ISignalIPDU {
+            cyclic_timing_period_value: cyclic_timing_period_value,
+            cyclic_timing_period_tolerance: cyclic_timing_period_tolerance,
+            cyclic_timing_offset_value: cyclic_timing_offset_value,
+            cyclic_timing_offset_tolerance: cyclic_timing_offset_tolerance,
+            number_of_repetitions: number_of_repetitions,
+            repetition_period_value: repetition_period_value,
+            repetition_period_tolerance: repetition_period_tolerance,
+            ungrouped_signals: ungrouped_signals, 
+            grouped_signals: grouped_signals 
+        };
+
+        return Some(isginal_ipdu);
     }
 
     fn handle_dcm_ipdu(&self, pdu: &Element){
@@ -268,7 +468,7 @@ impl ArxmlParser {
     
     fn handle_secured_ipdu(&self, pdu: &Element){
 
-    }*/
+    }
 
     fn handle_pdu_mapping(&self, pdu_mapping: &Element) -> Result<PDUMapping, String> {
         let pdu = self.get_required_reference(
@@ -299,9 +499,13 @@ impl ArxmlParser {
         let pdu_contained_header_id_long = self.get_subelement_optional_string(&pdu, 
             ElementName::ContainedIPduProps, ElementName::HeaderIdLongHeader);
 
-        /*match pdu.element_name() {
+        match pdu.element_name() {
             ElementName::ISignalIPdu => {
-                self.handle_isignal_ipdu(&pdu);
+                if let Some(value) = self.handle_isignal_ipdu(&pdu) {
+                    println!("all good");
+                } else {
+                    panic!("Error in handle_isignal_ipdu");
+                }
             }
             ElementName::DcmIPdu => {
                 self.handle_dcm_ipdu(&pdu);
@@ -309,20 +513,18 @@ impl ArxmlParser {
             ElementName::NmPdu => {
                 self.handle_nm_pdu(&pdu);
             }
-            ElementName::GeneralPurposeIPdu => {}
-            ElementName::NPdu => {}
-            ElementName::XcpPdu => {}
             ElementName::ContainerIPdu => {
                 self.handle_container_ipdu(&pdu);
             }
             ElementName::SecuredIPdu => {
                 self.handle_secured_ipdu(&pdu);
-            }
-            ElementName::GeneralPurposePdu => {}
+            } 
+            // Handle more?
             _ => {
-                panic!("PDU type not supported.")
+                let error = format!("PDU type {} not supported.", pdu.element_name().to_string());
+                return Err(error)
             }
-        }*/
+        }
 
         let pdu_mapping: PDUMapping = PDUMapping {
             name: pdu_name,
