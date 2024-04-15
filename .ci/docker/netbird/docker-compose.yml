@@ -22,6 +22,13 @@ services:
       - "../../../resources/development/tls/insecure-development-ca.pem:/usr/local/share/ca-certificates/insecure-development-ca.crt:ro"
       - netbird-management-keys:/management
       - "../../../resources/development/tls/:/opendut-tls/:ro"
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin123456
+      - KEYCLOAK_URL=https://keycloak
+      - NETBIRD_MANAGEMENT_URL=https://netbird-management
+      - KEYCLOAK_REALM_URL=https://keycloak/realms/netbird/.well-known/openid-configuration
+      - NETBIRD_PASSWORD=netbird
     healthcheck:
       test: ["CMD", "/netbird-management-health.sh"]
       interval: 1m
@@ -51,10 +58,6 @@ services:
       - "--accesslog"
     environment:
       - "LEGO_CA_CERTIFICATES=/opendut-tls/insecure-development-ca.pem"
-#    ports:
-#      - "127.0.0.1:8082:8080"
-#      - "80:80"
-#      - "443:443"
     volumes:
       - ./traefik/:/etc/traefik/dynamic:ro
       - "../../../resources/development/tls/:/opendut-tls/:ro"
@@ -65,6 +68,7 @@ services:
         - netbird-management
         - netbird-dashboard
 
+  # TODO: can this init stuff moved to management itself?
   management_init:
     build:
       context: ../../..
@@ -82,6 +86,13 @@ services:
       - ./netbird-api-functions.sh:/netbird-api-functions.sh
       - ./netbird-api-init.sh:/netbird-api-init.sh
     environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin123456
+      - KEYCLOAK_URL=https://keycloak
+      - NETBIRD_MANAGEMENT_URL=https://netbird-management
+      - KEYCLOAK_REALM_URL=https://keycloak/realms/netbird/.well-known/openid-configuration
+      - NETBIRD_PASSWORD=netbird
+      # TODO: CLEANUP!
       - PUID
       - PGID
       - PUSER
