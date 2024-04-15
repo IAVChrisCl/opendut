@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+
+  edgar:
+    build:
+      context: ../../..
+      dockerfile: ./.ci/docker/edgar/Dockerfile
+    command: sleep infinity
+    volumes:
+      - ../../../target/ci/distribution/x86_64-unknown-linux-gnu/:/opt/artifacts:ro
+    cap_add:
+      - NET_ADMIN
