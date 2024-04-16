@@ -53,7 +53,25 @@ pub struct PDUMapping {
     dynamic_length: String,
     category: String,
     contained_header_id_short: String,
-    contained_header_id_long: String
+    contained_header_id_long: String,
+    pdu: PDU
+}
+
+enum PDU {
+    ISignalIPDU(ISignalIPDU),
+    DCMIPDU(DCMIPDU),
+    NMPDU(NMPDU),
+    temp(i64)
+}
+
+pub struct DCMIPDU {
+    diag_pdu_type: String
+}
+
+pub struct NMPDU {
+    nm_signal: String,
+    start_pos: i64,
+    length: i64
 }
 
 pub struct ISignalIPDU {
@@ -454,13 +472,22 @@ impl ArxmlParser {
         return Some(isginal_ipdu);
     }
 
-    fn handle_dcm_ipdu(&self, pdu: &Element){
-        
-    }
     
-    fn handle_nm_pdu(&self, pdu: &Element){
+    /*fn handle_nm_pdu(&self, pdu: &Element) -> Option<NMPDU> {
+        let mapping = self.get_required_sub_subelement(&pdu,
+            ElementName::ISignalToIPduMappings,
+            ElementName::ISignalToIPduMapping);
 
-    }
+        let signal = self.get_required_reference(&mapping, ElementName::ISignalRef);
+
+        let signal_name = self.get_required_item_name(&signal, "NM-Signal");
+
+        let start_pos = self.get_optional_int_value(&mapping, ElementName::StartPosition);
+
+        let length = self.
+
+        Some(())
+    }*/
     
     fn handle_container_ipdu(&self, pdu: &Element){
 
@@ -499,19 +526,25 @@ impl ArxmlParser {
         let pdu_contained_header_id_long = self.get_subelement_optional_string(&pdu, 
             ElementName::ContainedIPduProps, ElementName::HeaderIdLongHeader);
 
+        let mut pdu_specific: PDU = PDU::temp(0);
+
         match pdu.element_name() {
             ElementName::ISignalIPdu => {
                 if let Some(value) = self.handle_isignal_ipdu(&pdu) {
-                    println!("all good");
+                    pdu_specific = PDU::ISignalIPDU(value);
                 } else {
                     panic!("Error in handle_isignal_ipdu");
                 }
             }
             ElementName::DcmIPdu => {
-                self.handle_dcm_ipdu(&pdu);
+                let diag_pdu_type = self.get_required_string(&pdu, ElementName::DiagPduType);
+                let dcm_ipdu: DCMIPDU = DCMIPDU {
+                    diag_pdu_type: diag_pdu_type
+                };
+                pdu_specific = PDU::DCMIPDU(dcm_ipdu);
             }
             ElementName::NmPdu => {
-                self.handle_nm_pdu(&pdu);
+                //self.handle_nm_pdu(&pdu);
             }
             ElementName::ContainerIPdu => {
                 self.handle_container_ipdu(&pdu);
@@ -534,7 +567,8 @@ impl ArxmlParser {
             dynamic_length: pdu_dynamic_length,
             category: pdu_category,
             contained_header_id_short: pdu_contained_header_id_short,
-            contained_header_id_long: pdu_contained_header_id_long 
+            contained_header_id_long: pdu_contained_header_id_long,
+            pdu: pdu_specific 
         };
 
         return Ok(pdu_mapping);     
