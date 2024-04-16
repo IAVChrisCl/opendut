@@ -3,13 +3,13 @@ set -e
 set -x
 
 PKI_ROOT_DIR="$(dirname "$0")/store"
+OPENDUT_PASSWORD_FILE="$PKI_ROOT_DIR/.env-pki"
 CA_PATH="$PKI_ROOT_DIR/insecure-development-ca"
 SERVERNAME="$1"
 CERT_PATH="$PKI_ROOT_DIR/$SERVERNAME"
 mkdir -p "$PKI_ROOT_DIR/deploy"
 CERT_DEPLOY_PATH="$PKI_ROOT_DIR/deploy/$SERVERNAME"
 
-OPENDUT_PASSWORD_FILE="${OPENDUT_PASSWORD_FILE:-$HOME/.opendut-ca.pass}"
 if [ ! -e "$OPENDUT_PASSWORD_FILE" ]; then
   echo "Password file $OPENDUT_PASSWORD_FILE missing. You may override the environment variable OPENDUT_PASSWORD_FILE."
   exit 1
