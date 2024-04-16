@@ -30,6 +30,12 @@ vagrant up
 vagrant destroy
 ```
 
+* Remove secrets
+```shell
+find .ci/deploy/localenv/data/pki/store/ -name "*.key" -delete -o -name "*.pem" -delete
+rm .ci/deploy/localenv/.env
+```
+
 ### Using docker compose
 
 * Start the local test environment using docker compose.
