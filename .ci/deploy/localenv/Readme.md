@@ -48,6 +48,8 @@ sh -c ${OPENDUT_REPO_ROOT:-.}/.ci/deploy/localenv/data/create_docker_compose_env
 .ci/deploy/localenv/data/create_docker_compose_env.sh > .ci/deploy/localenv/.env
 
 # start the environment
+# TODO check: build may be removed since image will be built
+docker compose --file ${OPENDUT_REPO_ROOT:-.}/.ci/deploy/localenv/docker-compose.yml --env-file ${OPENDUT_REPO_ROOT:-.}/.ci/deploy/localenv/.env build 
 docker compose --file ${OPENDUT_REPO_ROOT:-.}/.ci/deploy/localenv/docker-compose.yml --env-file ${OPENDUT_REPO_ROOT:-.}/.ci/deploy/localenv/.env up --detach 
 ```
 

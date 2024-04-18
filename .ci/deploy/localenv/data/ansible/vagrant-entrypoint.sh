@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 cd /vagrant || { echo Could not change directory to /vagrant; exit 1; }
+
+# TODO check: build may be removed since image will be built
 docker compose --file .ci/deploy/localenv/docker-compose.yml build
 docker compose --file .ci/deploy/localenv/docker-compose.yml up --detach
 
