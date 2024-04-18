@@ -180,7 +180,6 @@ services:
       dockerfile: ./.ci/deploy/localenv/data/netbird/Dockerfile_management
       args:
         NETBIRD_MANAGEMENT_VERSION: "0.25.0"
-    image: netbirdio/management:latest
     restart: unless-stopped
     depends_on:
       traefik:
