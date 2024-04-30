@@ -12,6 +12,7 @@ use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
 /* 
 - TODO: 
     - finish parsing and fill up structures 
+    - What about TPConfig and get_init_value_from_signals and get_init_value_from_signals?
     - create restbus simulation based on parsed data in a different source code file
 
 - Improvements at some stage:
@@ -41,6 +42,10 @@ pub struct CanFrameTriggering {
     addressing_mode: String,
     frame_rx_behavior: String,
     frame_tx_behavior: String,
+    rx_range_lower: i64,
+    rx_range_upper: i64,
+    sender_ecus: Vec<String>,
+    receiver_ecus: Vec<String>,
     frame_length: i64,
     pdu_mappings: Vec<PDUMapping>
 }
@@ -90,7 +95,8 @@ pub struct ISignalIPDU {
 pub struct ISignal {
     name: String,
     start_pos: i64,
-    length: i64
+    length: i64,
+    init_value: i64
 }
 
 pub struct E2EDataTransformationProps {
@@ -123,6 +129,9 @@ pub struct ArxmlParser {
 // https://github.com/DanielT/autosar-data/blob/main/autosar-data/examples/businfo/main.rs
 // Do I have to add license to this file or is project license enough?
 impl ArxmlParser {
+    /*
+        HELPER METHODS START 
+     */
     fn decode_integer(&self, cdata: &CharacterData) -> Option<i64> {
         if let CharacterData::String(text) = cdata {
             if text == "0" {
@@ -264,6 +273,17 @@ impl ArxmlParser {
         }
     }
 
+    fn ecu_of_frame_port(&self, frame_port: &Element) -> Option<String> {
+        let ecu_comm_port_instance = frame_port.parent().ok()??;
+        let comm_connector = ecu_comm_port_instance.parent().ok()??;
+        let connectors = comm_connector.parent().ok()??;
+        let ecu_instance = connectors.parent().ok()??;
+        ecu_instance.item_name()
+    }
+    /*
+        HELPER METHODS END
+     */
+
     fn handle_isignal_ipdu(&self, pdu: &Element) -> Option<ISignalIPDU> {
         // Find out these values: ...
         let mut cyclic_timing_period_value: f64 = 0_f64;
@@ -321,7 +341,7 @@ impl ArxmlParser {
         }
 
         //let mut signals: HashMap<String, (String, Option<i64>, Option<i64>)> = HashMap::new();
-        let mut signals: HashMap<String, (String, i64, i64)> = HashMap::new();
+        let mut signals: HashMap<String, (String, i64, i64, i64)> = HashMap::new();
         let mut signal_groups = Vec::new();
 
         if let Some(isignal_to_pdu_mappings) = pdu.get_sub_element(ElementName::ISignalToPduMappings) {
@@ -341,8 +361,17 @@ impl ArxmlParser {
                     
                     let length = self.get_required_int_value(&signal, 
                         ElementName::Length);
+
+                    let mut init_value: i64 = 0;
+                    if let Some(init_value_elem) = signal.get_sub_element(ElementName::InitValue) {
+                        if let Some(num_val) = init_value_elem.get_sub_element(ElementName::NumericalValueSpecification) {
+                            init_value = self.get_required_int_value(&num_val, ElementName::Value);
+                        } else {
+                            panic!("InitValue element does not have NumercialValueSpecification for signal {}", name);
+                        }
+                    } 
                     
-                    signals.insert(refpath, (name, start_pos, length));
+                    signals.insert(refpath, (name, start_pos, length, init_value));
                 } else if let Some(signal_group) = mapping
                     .get_sub_element(ElementName::ISignalGroupRef)
                     .and_then(|elem| elem.get_reference_target().ok())
@@ -371,7 +400,8 @@ impl ArxmlParser {
                         let isginal_tmp: ISignal = ISignal {
                             name: siginfo_tmp.0,
                             start_pos: siginfo.1,
-                            length: siginfo.2 
+                            length: siginfo.2,
+                            init_value: siginfo.3
                         };
 
                         signal_group_signals.push(isginal_tmp);
@@ -446,13 +476,14 @@ impl ArxmlParser {
         // fill
         let mut ungrouped_signals: Vec<ISignal> = Vec::new();
 
-        let remaining_signals: Vec<(String, i64, i64)> = signals.values().cloned().collect();
+        let remaining_signals: Vec<(String, i64, i64, i64)> = signals.values().cloned().collect();
         if remaining_signals.len() > 0 {
-            for (name, start_pos, length) in remaining_signals {
+            for (name, start_pos, length, init_value) in remaining_signals {
                 let isignal_struct: ISignal = ISignal {
                     name: name,
                     start_pos: start_pos,
-                    length: length
+                    length: length,
+                    init_value: init_value
                 };
                 ungrouped_signals.push(isignal_struct);
             }
@@ -611,6 +642,43 @@ impl ArxmlParser {
             can_frame_triggering,
             ElementName::CanFrameTxBehavior);
 
+        let mut rx_range_lower: i64 = 0;
+        let mut rx_range_upper: i64 = 0;
+        if let Some(range_elem) = can_frame_triggering.get_sub_element(ElementName::RxIdentifierRange) {
+            rx_range_lower = self.get_required_int_value(&range_elem, ElementName::LowerCanId);
+            rx_range_upper = self.get_required_int_value(&range_elem, ElementName::UpperCanId);
+        }
+
+        let mut rx_ecus: Vec<String> = Vec::new();
+        let mut tx_ecus: Vec<String> = Vec::new();
+        if let Some(frame_ports) = can_frame_triggering.get_sub_element(ElementName::FramePortRefs) {
+            let frame_ports: Vec<Element> = frame_ports.sub_elements()
+                .filter(|se| se.element_name() == ElementName::FramePortRef)
+                .filter_map(|fpr| fpr.get_reference_target().ok())
+                .collect();
+
+            for frame_port in frame_ports {
+                if let Some(ecu_name) = self.ecu_of_frame_port(&frame_port) {
+                    if let Some(CharacterData::Enum(direction)) = frame_port
+                        .get_sub_element(ElementName::CommunicationDirection)
+                        .and_then(|elem| elem.character_data())
+                    {
+                        match direction {
+                            EnumItem::In => rx_ecus.push(ecu_name), 
+                            EnumItem::Out => tx_ecus.push(ecu_name), 
+                            _ => return Err(format!("Invalid direction ID encountered in FramePort. Skipping CanFrameTriggering {}", can_frame_triggering_name))
+                        }
+                    } else {
+                        return Err(format!("No CommunicationDirection encountered in FramePort. Skipping CanFrameTriggering {}", can_frame_triggering_name)) 
+                    }
+                } else {
+                    return Err(format!("Could not extract ECUName in FramePort. Skipping CanFrameTriggering {}", can_frame_triggering_name)) ;
+                }
+            }
+        } else {
+            return Err(format!("FramePortRefs in CanFrameTriggering not found. Skipping CanFrameTriggering {}", can_frame_triggering_name));
+        }
+
         let frame_length = self.get_optional_int_value(
             &frame,
             ElementName::FrameLength);
@@ -634,6 +702,10 @@ impl ArxmlParser {
             addressing_mode: addressing_mode,
             frame_rx_behavior: frame_rx_behavior,
             frame_tx_behavior: frame_tx_behavior,
+            rx_range_lower: rx_range_lower,
+            rx_range_upper: rx_range_upper,
+            receiver_ecus: rx_ecus,
+            sender_ecus: tx_ecus,
             frame_length: frame_length,
             pdu_mappings: pdu_mappings_vec 
         };
@@ -754,6 +826,16 @@ fn test_data(can_clusters: Vec<CanCluster>) -> bool {
             println!("\t\tAddressing Mode: {}", can_frame_triggering.addressing_mode);
             println!("\t\tFrame RX Behavior: {}", can_frame_triggering.frame_rx_behavior);
             println!("\t\tFrame TX Behavior: {}", can_frame_triggering.frame_tx_behavior);
+            println!("\t\tRx Range Lower: {}", can_frame_triggering.rx_range_lower);
+            println!("\t\tRx Range Upper: {}", can_frame_triggering.rx_range_upper);
+            println!("\t\tSender ECUs:");
+            for sender_ecu in can_frame_triggering.sender_ecus {
+                println!("\t\t\tName: {}", sender_ecu);
+            }
+            println!("\t\tReceiver ECUs:");
+            for receiver_ecu in can_frame_triggering.receiver_ecus {
+                println!("\t\t\tName: {}", receiver_ecu);
+            }
             println!("\t\tFrame Length: {}", can_frame_triggering.frame_length);
             for pdu_mapping in can_frame_triggering.pdu_mappings {
                 println!("\t\tPDUMapping: {}", pdu_mapping.name);
@@ -795,6 +877,7 @@ fn test_data(can_clusters: Vec<CanCluster>) -> bool {
                                 println!("\t\t\t\t\tISignal: {}", isignal.name);
                                 println!("\t\t\t\t\t\tStart Position: {}", isignal.start_pos);
                                 println!("\t\t\t\t\t\tLength: {}", isignal.length);
+                                println!("\t\t\t\t\t\tInit Value: {}", isignal.init_value);
                             }
                             for data_transformation in isignal_group.data_transformations {
                                 println!("\t\t\t\t\tData Transformation: {}", data_transformation);
@@ -803,12 +886,14 @@ fn test_data(can_clusters: Vec<CanCluster>) -> bool {
                                 println!("\t\t\t\t\tE2E Transformer Properties: {}", transformation_prop.transformer_name);
                                 println!("\t\t\t\t\t\tData ID: {}", transformation_prop.data_id);
                                 println!("\t\t\t\t\t\tData Length: {}", transformation_prop.data_length);
+                                panic!("ok");
                             }
                         }
                         for isignal in pdu.ungrouped_signals {
                                 println!("\t\t\t\tUngrouped ISignal: {}", isignal.name);
                                 println!("\t\t\t\t\tStart Position: {}", isignal.start_pos);
                                 println!("\t\t\t\t\tLength: {}", isignal.length);
+                                println!("\t\t\t\t\tInit Value: {}", isignal.init_value);
                         }
                     }
                     //_ => {}
