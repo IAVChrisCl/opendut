@@ -1,5 +1,5 @@
 use core::panic;
-use std::time::Instant;
+use std::{hash::Hash, time::Instant};
 use std::collections::HashMap;
 
 use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
@@ -14,6 +14,7 @@ use autosar_data::{AutosarModel, CharacterData, Element, ElementName, EnumItem};
     - finish parsing and fill up structures 
     - What about TPConfig and get_init_value_from_signals and get_init_value_from_signals?
     - create restbus simulation based on parsed data in a different source code file
+    - include signal desc
 
 - Improvements at some stage:
     - Provide options to store parsed data for quicker restart
@@ -33,7 +34,7 @@ pub struct CanCluster {
     name: String,
     baudrate: i64,
     canfd_baudrate: i64,
-    can_frame_triggerings: Vec<CanFrameTriggering>
+    can_frame_triggerings: HashMap<i64, CanFrameTriggering>
 }
 pub struct CanFrameTriggering {
     frame_triggering_name: String,
@@ -52,7 +53,7 @@ pub struct CanFrameTriggering {
 
 pub struct PDUMapping {
     name: String,
-    byte_order: String,
+    byte_order: bool,
     start_position: i64,
     length: i64,
     dynamic_length: String,
@@ -94,6 +95,7 @@ pub struct ISignalIPDU {
 
 pub struct ISignal {
     name: String,
+    byte_order: bool,
     start_pos: i64,
     length: i64,
     init_value: i64
@@ -280,6 +282,15 @@ impl ArxmlParser {
         let ecu_instance = connectors.parent().ok()??;
         ecu_instance.item_name()
     }
+
+    // 1: Big Endian, 0: Little Endian
+    fn get_byte_order(&self, byte_order: &String) -> bool {
+        if byte_order.eq("MOST-SIGNIFICANT-BYTE-LAST") {
+            return false;
+        }
+        panic!("true");
+        return true;
+    }
     /*
         HELPER METHODS END
      */
@@ -341,7 +352,7 @@ impl ArxmlParser {
         }
 
         //let mut signals: HashMap<String, (String, Option<i64>, Option<i64>)> = HashMap::new();
-        let mut signals: HashMap<String, (String, i64, i64, i64)> = HashMap::new();
+        let mut signals: HashMap<String, (String, String, i64, i64, i64)> = HashMap::new();
         let mut signal_groups = Vec::new();
 
         if let Some(isignal_to_pdu_mappings) = pdu.get_sub_element(ElementName::ISignalToPduMappings) {
@@ -355,6 +366,8 @@ impl ArxmlParser {
                         ElementName::ISignalRef);
 
                     let name = self.get_required_item_name(&signal, "ISignalRef");
+
+                    let byte_order = self.get_required_string(&mapping, ElementName::PackingByteOrder);
 
                     let start_pos = self.get_required_int_value(&mapping, 
                         ElementName::StartPosition);
@@ -371,7 +384,7 @@ impl ArxmlParser {
                         }
                     } 
                     
-                    signals.insert(refpath, (name, start_pos, length, init_value));
+                    signals.insert(refpath, (name, byte_order, start_pos, length, init_value));
                 } else if let Some(signal_group) = mapping
                     .get_sub_element(ElementName::ISignalGroupRef)
                     .and_then(|elem| elem.get_reference_target().ok())
@@ -399,9 +412,10 @@ impl ArxmlParser {
                         let siginfo_tmp = siginfo.clone();
                         let isginal_tmp: ISignal = ISignal {
                             name: siginfo_tmp.0,
-                            start_pos: siginfo.1,
-                            length: siginfo.2,
-                            init_value: siginfo.3
+                            byte_order: self.get_byte_order(&siginfo_tmp.1),
+                            start_pos: siginfo_tmp.2,
+                            length: siginfo_tmp.3,
+                            init_value: siginfo_tmp.4
                         };
 
                         signal_group_signals.push(isginal_tmp);
@@ -409,6 +423,8 @@ impl ArxmlParser {
                     }
                 }
             }
+
+            signal_group_signals.sort_by(|a, b| a.start_pos.cmp(&b.start_pos));
 
             let mut data_transformations: Vec<String> = Vec::new();
 
@@ -476,11 +492,12 @@ impl ArxmlParser {
         // fill
         let mut ungrouped_signals: Vec<ISignal> = Vec::new();
 
-        let remaining_signals: Vec<(String, i64, i64, i64)> = signals.values().cloned().collect();
+        let remaining_signals: Vec<(String, String, i64, i64, i64)> = signals.values().cloned().collect();
         if remaining_signals.len() > 0 {
-            for (name, start_pos, length, init_value) in remaining_signals {
+            for (name, byte_order, start_pos, length, init_value) in remaining_signals {
                 let isignal_struct: ISignal = ISignal {
                     name: name,
+                    byte_order: self.get_byte_order(&byte_order),
                     start_pos: start_pos,
                     length: length,
                     init_value: init_value
@@ -488,6 +505,8 @@ impl ArxmlParser {
                 ungrouped_signals.push(isignal_struct);
             }
         }
+            
+        ungrouped_signals.sort_by(|a, b| a.start_pos.cmp(&b.start_pos));
         
         let isginal_ipdu: ISignalIPDU = ISignalIPDU {
             cyclic_timing_period_value: cyclic_timing_period_value,
@@ -597,7 +616,7 @@ impl ArxmlParser {
 
         let pdu_mapping: PDUMapping = PDUMapping {
             name: pdu_name,
-            byte_order: byte_order,
+            byte_order: self.get_byte_order(&byte_order),
             start_position: start_position,
             length: pdu_length,
             dynamic_length: pdu_dynamic_length,
@@ -749,12 +768,14 @@ impl ArxmlParser {
             return Err(msg.to_string());
         }
 
-        let mut can_frame_triggerings: Vec<CanFrameTriggering> = Vec::new(); 
+        let mut can_frame_triggerings: HashMap<i64, CanFrameTriggering> = HashMap::new(); 
         for physical_channel in physical_channels {
             if let Some(frame_triggerings) = physical_channel.get_sub_element(ElementName::FrameTriggerings) {
                 for can_frame_triggering in frame_triggerings.sub_elements() {
                     match self.handle_can_frame_triggering(&can_frame_triggering) {
-                        Ok(value) => can_frame_triggerings.push(value),
+                        Ok(value) => {
+                            can_frame_triggerings.insert(value.can_id.clone(), value);
+                        }
                         Err(error) => println!("[-] WARNING: {}", error),
                     }
                 }
@@ -774,7 +795,7 @@ impl ArxmlParser {
     // Main parsing method. Uses autosar-data libray for parsing ARXML 
     // In the future, it might be extended to support Etherneth, Flexray, ...
     // Returns now a vector of CanCluster
-    pub fn parse_file(&self, file_name: String) -> Option<Vec<CanCluster>> {
+    pub fn parse_file(&self, file_name: String) -> Option<HashMap<String, CanCluster>> {
         let start = Instant::now();
 
         let model = AutosarModel::new();
@@ -787,7 +808,7 @@ impl ArxmlParser {
         println!("[+] Duration of loading was: {:?}", start.elapsed());
         // DEBUG END
 
-        let mut can_clusters: Vec<CanCluster> = Vec::new();
+        let mut can_clusters: HashMap<String, CanCluster> = HashMap::new();
 
         // Iterate over Autosar elements and handle CanCluster elements
         for element in model
@@ -797,9 +818,11 @@ impl ArxmlParser {
         {
             match element.element_name() {
                 ElementName::CanCluster => {
-                    let result = self.handle_can_cluster(&element);
+                    let result: Result<CanCluster, String> = self.handle_can_cluster(&element);
                     match result {
-                        Ok(value) => can_clusters.push(value),
+                        Ok(value) => {
+                            can_clusters.insert(value.name.clone(), value);
+                        }
                         Err(error) => println!("[-] WARNING: {}", error)
                     }
                 }
@@ -814,12 +837,12 @@ impl ArxmlParser {
 }
 
 // Debug output. Code can be later reused with modificaitons in Restbus Simulaiton setup
-fn test_data(can_clusters: Vec<CanCluster>) -> bool {
-    for cluster in can_clusters {
+fn test_data(can_clusters: &HashMap<String, CanCluster>) {
+    for cluster in can_clusters.values() {
         println!("Cluster: {}", cluster.name);
         println!("\tBaudrate: {}", cluster.baudrate);
         println!("\tFD Baudrate: {}", cluster.canfd_baudrate);
-        for can_frame_triggering in cluster.can_frame_triggerings {
+        for can_frame_triggering in cluster.can_frame_triggerings.values() {
             println!("\tCanFrameTriggering: {}", can_frame_triggering.frame_triggering_name);
             println!("\t\tFrame Name: {}", can_frame_triggering.frame_name);
             println!("\t\tCAN ID: {}", can_frame_triggering.can_id);
@@ -829,15 +852,15 @@ fn test_data(can_clusters: Vec<CanCluster>) -> bool {
             println!("\t\tRx Range Lower: {}", can_frame_triggering.rx_range_lower);
             println!("\t\tRx Range Upper: {}", can_frame_triggering.rx_range_upper);
             println!("\t\tSender ECUs:");
-            for sender_ecu in can_frame_triggering.sender_ecus {
+            for sender_ecu in &can_frame_triggering.sender_ecus {
                 println!("\t\t\tName: {}", sender_ecu);
             }
             println!("\t\tReceiver ECUs:");
-            for receiver_ecu in can_frame_triggering.receiver_ecus {
+            for receiver_ecu in &can_frame_triggering.receiver_ecus {
                 println!("\t\t\tName: {}", receiver_ecu);
             }
             println!("\t\tFrame Length: {}", can_frame_triggering.frame_length);
-            for pdu_mapping in can_frame_triggering.pdu_mappings {
+            for pdu_mapping in &can_frame_triggering.pdu_mappings {
                 println!("\t\tPDUMapping: {}", pdu_mapping.name);
                 println!("\t\t\tByte Order: {}", pdu_mapping.byte_order);
                 println!("\t\t\tStart Position: {}", pdu_mapping.start_position);
@@ -846,18 +869,18 @@ fn test_data(can_clusters: Vec<CanCluster>) -> bool {
                 println!("\t\t\tCategory: {}", pdu_mapping.category);
                 println!("\t\t\tContained Header ID Short: {}", pdu_mapping.contained_header_id_short);
                 println!("\t\t\tContained Header ID Long: {}", pdu_mapping.contained_header_id_long);
-                match pdu_mapping.pdu {
+                match &pdu_mapping.pdu {
                     PDU::ISignalIPDU(pdu) => {
                         println!("\t\t\tISignalPDU =>");
                         println!("\t\t\t\tCyclic Timing in s: {}", pdu.cyclic_timing_period_value);
-                        if let Some(cyclic_timing_period_tolerance) = pdu.cyclic_timing_period_tolerance {
+                        if let Some(cyclic_timing_period_tolerance) = &pdu.cyclic_timing_period_tolerance {
                             match cyclic_timing_period_tolerance {
                                 TimeRangeTolerance::Absolute(value) => println!("\t\t\t\tCyclic Timing Tolerance in s: {}", value),
                                 TimeRangeTolerance::Relative(value) => println!("\t\t\t\tCyclic Timing Tolerance in %: {}", value),
                             }
                         }
                         println!("\t\t\t\tCyclic Timing Offset in s: {}", pdu.cyclic_timing_offset_value);
-                        if let Some(cyclic_timing_offset_tolerance) = pdu.cyclic_timing_offset_tolerance {
+                        if let Some(cyclic_timing_offset_tolerance) = &pdu.cyclic_timing_offset_tolerance {
                             match cyclic_timing_offset_tolerance {
                                 TimeRangeTolerance::Absolute(value) => println!("\t\t\t\tCyclic Timing Offset Tolerance in s: {}", value),
                                 TimeRangeTolerance::Relative(value) => println!("\t\t\t\tCyclic Timing Offset Tolerance in %: {}", value),
@@ -865,32 +888,34 @@ fn test_data(can_clusters: Vec<CanCluster>) -> bool {
                         }
                         println!("\t\t\t\tNumber of Repetitions: {}", pdu.number_of_repetitions);
                         println!("\t\t\t\tRepetition Period: {}", pdu.repetition_period_value);
-                        if let Some(repetition_period_tolerance) = pdu.repetition_period_tolerance {
+                        if let Some(repetition_period_tolerance) = &pdu.repetition_period_tolerance {
                             match repetition_period_tolerance {
                                 TimeRangeTolerance::Absolute(value) => println!("\t\t\t\tRepetition Period Tolerance in s: {}", value),
                                 TimeRangeTolerance::Relative(value) => println!("\t\t\t\tRepetition Period Tolerance in %: {}", value),
                             }
                         }
-                        for isignal_group in pdu.grouped_signals {
+                        for isignal_group in &pdu.grouped_signals {
                             println!("\t\t\t\tISignal Group: {}", isignal_group.name);
-                            for isignal in isignal_group.isignals {
+                            for isignal in &isignal_group.isignals {
                                 println!("\t\t\t\t\tISignal: {}", isignal.name);
+                                println!("\t\t\t\t\t\tByte Order: {}", isignal.byte_order);
                                 println!("\t\t\t\t\t\tStart Position: {}", isignal.start_pos);
                                 println!("\t\t\t\t\t\tLength: {}", isignal.length);
                                 println!("\t\t\t\t\t\tInit Value: {}", isignal.init_value);
                             }
-                            for data_transformation in isignal_group.data_transformations {
+                            for data_transformation in &isignal_group.data_transformations {
                                 println!("\t\t\t\t\tData Transformation: {}", data_transformation);
                             }
-                            for transformation_prop in isignal_group.transformation_props {
+                            for transformation_prop in &isignal_group.transformation_props {
                                 println!("\t\t\t\t\tE2E Transformer Properties: {}", transformation_prop.transformer_name);
                                 println!("\t\t\t\t\t\tData ID: {}", transformation_prop.data_id);
                                 println!("\t\t\t\t\t\tData Length: {}", transformation_prop.data_length);
                                 panic!("ok");
                             }
                         }
-                        for isignal in pdu.ungrouped_signals {
+                        for isignal in &pdu.ungrouped_signals {
                                 println!("\t\t\t\tUngrouped ISignal: {}", isignal.name);
+                                println!("\t\t\t\t\tByte Order: {}", isignal.byte_order);
                                 println!("\t\t\t\t\tStart Position: {}", isignal.start_pos);
                                 println!("\t\t\t\t\tLength: {}", isignal.length);
                                 println!("\t\t\t\t\tInit Value: {}", isignal.init_value);
@@ -901,21 +926,207 @@ fn test_data(can_clusters: Vec<CanCluster>) -> bool {
             }
         }
     }
-
-    return true;
 }
+
+
+fn test_extract_pdus(can_clusters: &HashMap<String, CanCluster>, bus_name: String) {
+    if let Some(can_cluster) = can_clusters.get(&bus_name) {
+        for can_frame_triggering in &can_cluster.can_frame_triggerings {
+             // check multiple pdu and check multiple pdu mapping
+        }
+    } 
+}
+
+
+fn test_find_pdu(can_clusters: &HashMap<String, CanCluster>, bus_name: String, can_id: i64) {
+    if let Some(can_cluster) = can_clusters.get(&bus_name) {
+        if let Some(can_frame_triggering) = can_cluster.can_frame_triggerings.get(&can_id) {
+            println!("pdu mapping len: {}", can_frame_triggering.pdu_mappings.len());
+            let mut counter = 0;
+            for pdu_mapping in &can_frame_triggering.pdu_mappings {
+                match &pdu_mapping.pdu {
+                    PDU::ISignalIPDU(pdu) => {
+                        let init_values = extract_pdu_init_values(pdu, pdu_mapping.length, &pdu_mapping.byte_order);
+                        println!("PDU {} for can_id {:x}", counter, can_id);
+                        let mut hex_string = String::new();
+                        for element in &init_values {
+                            hex_string.push_str(&format!("{:02X}", element));
+                        }
+                        println!("Values: {}", hex_string);
+                    }
+                    //_ => {}
+                }
+                counter += 1;
+            }
+        }
+    }
+}
+
+// See how endianess affects PDU in 6.2.2 https://www.autosar.org/fileadmin/standards/R22-11/CP/AUTOSAR_TPS_SystemTemplate.pdf
+// Currenlty assumes Little Endian byte ordering and has support for signals that are Little Endian or Big Endin
+// Bit positions in undefined ranges are set to 1
+fn extract_pdu_init_values(pdu: &ISignalIPDU, length: i64, byte_order: &bool) -> Vec<u8> {
+    // pre checks
+    if pdu.grouped_signals.len() > 0 && pdu.ungrouped_signals.len() > 0 {
+        panic!("both signal vectors are > 0");
+    }
+
+    let isignals: &Vec<ISignal>;
+
+    if pdu.grouped_signals.len() > 0 {
+        if pdu.grouped_signals.len() > 1 {
+            panic!("Grouped signals > 0");
+        }
+        isignals = &pdu.grouped_signals[0].isignals;
+    } else {
+        isignals = &pdu.ungrouped_signals;
+    }
+
+    println!("\t\t\tISignalPDU =>");
+        println!("\t\t\t\tCyclic Timing in s: {}", pdu.cyclic_timing_period_value);
+        if let Some(cyclic_timing_period_tolerance) = &pdu.cyclic_timing_period_tolerance {
+            match cyclic_timing_period_tolerance {
+                TimeRangeTolerance::Absolute(value) => println!("\t\t\t\tCyclic Timing Tolerance in s: {}", value),
+                TimeRangeTolerance::Relative(value) => println!("\t\t\t\tCyclic Timing Tolerance in %: {}", value),
+            }
+        }
+        println!("\t\t\t\tCyclic Timing Offset in s: {}", pdu.cyclic_timing_offset_value);
+        if let Some(cyclic_timing_offset_tolerance) = &pdu.cyclic_timing_offset_tolerance {
+            match cyclic_timing_offset_tolerance {
+                TimeRangeTolerance::Absolute(value) => println!("\t\t\t\tCyclic Timing Offset Tolerance in s: {}", value),
+                TimeRangeTolerance::Relative(value) => println!("\t\t\t\tCyclic Timing Offset Tolerance in %: {}", value),
+            }
+        }
+        println!("\t\t\t\tNumber of Repetitions: {}", pdu.number_of_repetitions);
+        println!("\t\t\t\tRepetition Period: {}", pdu.repetition_period_value);
+        if let Some(repetition_period_tolerance) = &pdu.repetition_period_tolerance {
+            match repetition_period_tolerance {
+                TimeRangeTolerance::Absolute(value) => println!("\t\t\t\tRepetition Period Tolerance in s: {}", value),
+                TimeRangeTolerance::Relative(value) => println!("\t\t\t\tRepetition Period Tolerance in %: {}", value),
+            }
+        }
+        for isignal_group in &pdu.grouped_signals {
+            println!("\t\t\t\tISignal Group: {}", isignal_group.name);
+            for isignal in &isignal_group.isignals {
+                println!("\t\t\t\t\tISignal: {}", isignal.name);
+                println!("\t\t\t\t\t\tByte Order: {}", isignal.byte_order);
+                println!("\t\t\t\t\t\tStart Position: {}", isignal.start_pos);
+                println!("\t\t\t\t\t\tLength: {}", isignal.length);
+                println!("\t\t\t\t\t\tInit Value: {}", isignal.init_value);
+            }
+            for data_transformation in &isignal_group.data_transformations {
+                println!("\t\t\t\t\tData Transformation: {}", data_transformation);
+            }
+            for transformation_prop in &isignal_group.transformation_props {
+                println!("\t\t\t\t\tE2E Transformer Properties: {}", transformation_prop.transformer_name);
+                println!("\t\t\t\t\t\tData ID: {}", transformation_prop.data_id);
+                println!("\t\t\t\t\t\tData Length: {}", transformation_prop.data_length);
+                panic!("ok");
+            }
+        }
+        for isignal in &pdu.ungrouped_signals {
+                println!("\t\t\t\tUngrouped ISignal: {}", isignal.name);
+                println!("\t\t\t\t\tByte Order: {}", isignal.byte_order);
+                println!("\t\t\t\t\tStart Position: {}", isignal.start_pos);
+                println!("\t\t\t\t\tLength: {}", isignal.length);
+                println!("\t\t\t\t\tInit Value: {}", isignal.init_value);
+        }
+
+    let dlc: usize = length.try_into().unwrap();
+    
+    let mut bits = vec![true; dlc * 8]; // Using bit 1 for undefined positions in PDU
+
+    for isignal in isignals {
+        let mut tmp_bit_array: Vec<bool> = Vec::new();
+        let mut n = isignal.init_value;
+        let isignal_byte_order = isignal.byte_order;
+        let isignal_length: usize = isignal.length.try_into().unwrap();
+        let isignal_start: usize = isignal.start_pos.try_into().unwrap();
+
+        while n != 0 {
+            tmp_bit_array.push(n & 1 != 0);
+            n >>= 1;
+        }
+
+        while tmp_bit_array.len() < isignal_length {
+            tmp_bit_array.push(false);
+        }
+
+        if isignal_byte_order {
+            tmp_bit_array.reverse();
+        }
+
+        if tmp_bit_array.len() != isignal.length.try_into().unwrap() {
+            panic!("Miscalculation for tmp_bit_array");
+        }
+
+        let mut index: usize = 0;
+
+        while index < isignal_length {
+            bits[isignal_start + index] = tmp_bit_array[index];
+            index += 1;
+        } 
+    }
+
+    let mut init_values: Vec<u8> = Vec::new();
+    let mut current_byte: u8 = 0;
+    let mut bit_count = 0;
+        
+    for bit in bits {
+        current_byte <<= 1;
+        if bit {
+            current_byte |= 1;
+        }
+        bit_count += 1;
+   
+        if bit_count == 8 {
+            init_values.push(current_byte);
+            current_byte = 0;
+            bit_count = 0;
+        }
+    }
+    if bit_count > 0 {
+        current_byte <<= 8 - bit_count;
+        init_values.push(current_byte);
+    }
+
+    if !byte_order {
+        for init_value in init_values.iter_mut() {
+            *init_value = init_value.reverse_bits(); // reverse bits of each byte
+        }
+    }
+
+    if init_values.len() != dlc {
+        panic!("Error creating byte array");
+    }
+
+
+    /*if !byte_order { 
+        init_values.reverse();
+    }*/
+
+    return init_values;
+}
+
 
 fn main() {
     println!("[+] Starting openDuT ARXML parser over main method.");
     
-    let file_name = "test.arxml";
+    let file_name = "test_normal.arxml";
 
     let arxml_parser: ArxmlParser = ArxmlParser {};
 
     if let Some(can_clusters) = arxml_parser
         .parse_file(file_name.to_string()) 
     {
-        test_data(can_clusters);
+        test_data(&can_clusters);
+        //test_extract_pdus(&can_clusters, String::from("MEB_EVCANFD"));
+        test_find_pdu(&can_clusters, String::from("MEB_EVCANFD"), 0x12E20044);
+        test_find_pdu(&can_clusters, String::from("MEB_EVCANFD"), 0x1a555517);
+        test_find_pdu(&can_clusters, String::from("MEB_EVCANFD"), 0x12dd5471);
+        test_find_pdu(&can_clusters, String::from("MEB_EVCANFD"), 0x16a954a6);
+        test_find_pdu(&can_clusters, String::from("MEB_EVCANFD"), 0x40);
+        test_find_pdu(&can_clusters, String::from("MEB_EVCANFD"), 0x520);
     } else {
         panic!("Parsing failed.")
     }
