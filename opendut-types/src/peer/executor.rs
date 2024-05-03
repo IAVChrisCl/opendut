@@ -24,6 +24,9 @@ pub enum ExecutorDescriptor {
         ports: Vec<ContainerPortSpec>,
         command: ContainerCommand,
         args: Vec<ContainerCommandArgument>,
+        interfaces: Vec<Interfaces>,
+        preconditions: Vec<Preconditions>,
+        results_url: ResultsUrl
     }
 }
 
@@ -489,6 +492,107 @@ impl fmt::Display for ContainerCommandArgument {
         write!(f, "{}", self.0)
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Interfaces {
+    name: String,
+    value: String,
+}
+
+impl Interfaces {
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+    
+    pub fn value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Preconditions {
+    name: String,
+    value: String,
+}
+
+impl Preconditions {
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+    
+    pub fn value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ResultsUrl(String);
+
+impl ResultsUrl {
+    pub const MIN_LENGTH: usize = 1;
+    
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(thiserror::Error, Clone, Debug)]
+pub enum IllegalResultsUrl  {
+    #[error(
+    "Results Url  '{value}' is too short. Expected at least {expected} characters, got {actual}."
+    )]
+    TooShort {
+        value: String,
+        expected: usize,
+        actual: usize,
+    }
+}
+
+impl TryFrom<String> for ResultsUrl  {
+    type Error = IllegalResultsUrl ;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let length = value.len();
+        if length < Self::MIN_LENGTH {
+            Err(IllegalResultsUrl::TooShort {
+                value,
+                expected: Self::MIN_LENGTH,
+                actual: length,
+            })
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+
+impl TryFrom<&str> for ResultsUrl {
+    type Error = IllegalResultsUrl;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        ResultsUrl::try_from(value.to_owned())
+    }
+}
+
+impl FromStr for ResultsUrl {
+    type Err = IllegalResultsUrl;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        ResultsUrl::try_from(value)
+    }
+}
+
+impl From<ResultsUrl> for String {
+    fn from(value: ResultsUrl) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for ResultsUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 
 #[derive(thiserror::Error, Clone, Debug)]
 pub enum IllegalContainerConfiguration {}

@@ -46,7 +46,10 @@ impl From<crate::peer::executor::ExecutorDescriptor> for ExecutorDescriptor {
                 envs,
                 ports,
                 command,
-                args
+                args,
+                interfaces,
+                preconditions,
+                results_url
             } => {
                 ExecutorDescriptor { 
                     descriptor: Some(executor_descriptor::Descriptor::Container(
@@ -60,6 +63,9 @@ impl From<crate::peer::executor::ExecutorDescriptor> for ExecutorDescriptor {
                             ports: ports.into_iter().map(|port| port.into()).collect(),
                             command: Some(command.into()),
                             args: args.into_iter().map(|arg| arg.into()).collect(),
+                            interfaces: interfaces.into_iter().map(|interface| interface.into()).collect(),
+                            preconditions: preconditions.into_iter().map(|precondition| precondition.into()).collect(),
+                            results_url: Some(results_url.into()), 
                         }
                     ))
                 }
@@ -91,7 +97,10 @@ impl TryFrom<ExecutorDescriptor> for crate::peer::executor::ExecutorDescriptor {
                     envs,
                     ports,
                     command,
-                    args
+                    args,
+                    interfaces,
+                    preconditions,
+                    results_url
                 } = descriptor;
                 let engine = engine
                     .ok_or(ErrorBuilder::field_not_set("engine"))?
@@ -125,6 +134,12 @@ impl TryFrom<ExecutorDescriptor> for crate::peer::executor::ExecutorDescriptor {
                     .into_iter()
                     .map(TryFrom::try_from)
                     .collect::<Result<_, _>>()?;
+                let interfaces = interfaces
+                    .into_iter();
+                let preconditions = preconditions
+                    .into_iter();
+                let results_url = results_url
+                    .try_into()?;
                 crate::peer::executor::ExecutorDescriptor::Container {
                     engine,
                     name,
@@ -135,6 +150,9 @@ impl TryFrom<ExecutorDescriptor> for crate::peer::executor::ExecutorDescriptor {
                     ports,
                     command,
                     args,
+                    interfaces,
+                    preconditions,
+                    results_url
                 }
             }
         };

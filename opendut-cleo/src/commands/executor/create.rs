@@ -4,11 +4,31 @@ use opendut_carl_api::carl::CarlClient;
 use opendut_types::peer::{PeerId};
 use opendut_types::peer::executor::{ContainerCommand, ContainerCommandArgument, ContainerDevice, ContainerEnvironmentVariable, ContainerImage, ContainerName, ContainerPortSpec, ContainerVolume, Engine, ExecutorDescriptor};
 
+use crate::commands::peer;
 use crate::{CreateOutputFormat, DescribeOutputFormat, EngineVariants};
 
 /// Create a container executor
 #[derive(clap::Parser)]
 pub struct CreateContainerExecutorCli {
+    #[clap(subcommand)]
+    pub option: Option,
+}
+
+#[derive(clap::Parser)]
+pub enum Option {
+    JsonConfigString(JsonConfigString),
+    CommandLineArguments(CommandLineArguments),
+}
+
+#[derive(clap::Parser)]
+pub struct JsonConfigString {
+    ///Input file
+    #[clap(short, long)]
+    test_executor_config: String,
+}
+
+#[derive(clap::Parser)]
+pub struct CommandLineArguments {
     ///ID of the peer to add the container executor to
     #[arg(long)]
     peer_id: Uuid,
@@ -39,48 +59,59 @@ pub struct CreateContainerExecutorCli {
     ///Container arguments
     #[arg(short, long, num_args = 1..)]
     args: Option<Vec<ContainerCommandArgument>>,
-
 }
 
 impl CreateContainerExecutorCli {
     #[allow(clippy::too_many_arguments)]
     pub async fn execute(self, carl: &mut CarlClient, output: CreateOutputFormat) -> crate::Result<()> {
-        let peer_id = PeerId::from(self.peer_id);
-
-        let mut peer_descriptor = carl.peers.get_peer_descriptor(peer_id).await
-            .map_err(|_| format!("Failed to get peer with ID <{}>.", peer_id))?;
-
-        let engine = match self.engine {
-            EngineVariants::Docker => { Engine::Docker }
-            EngineVariants::Podman => { Engine::Podman }
-        };
-
-        let volumes = self.volumes.unwrap_or_default();
-        let devices = self.devices.unwrap_or_default();
-        let ports = self.ports.unwrap_or_default();
-        let args = self.args.unwrap_or_default();
-
-        let mut environment_variables = vec![];
-
-        for env in self.envs.unwrap_or_default() {
-            if let Some((name, value)) = env.split_once('=') {
-                let env = ContainerEnvironmentVariable::new(name, value)
-                    .map_err(|cause| cause.to_string())?;
-                environment_variables.push(env)
+        match self.option {
+            Some(Option::JsonConfigString(json_string)) => {
+                let executor_descriptor: ExecutorDescriptor = serde_json::from_str(json_string)?;
+                let peer_id = executor_descriptor.peer_id;
+                let mut peer_descriptor = carl.peers.get_peer_descriptor(peer_id).await
+                    .map_err(|_| format!("Failed to get peer with ID <{}>.", peer_id))?;   
             }
-        };
+            Some(Option::CommandLineArguments(args)) => {
 
-        let executor_descriptor = ExecutorDescriptor::Container {
-            engine,
-            name: self.name.unwrap_or_default(),
-            image: self.image,
-            volumes,
-            devices,
-            envs: environment_variables,
-            ports,
-            command: self.command.unwrap_or_default(),
-            args,
-        };
+                let peer_id = PeerId::from(args.peer_id);
+
+                let engine = match args.engine {
+                    EngineVariants::Docker => { Engine::Docker }
+                    EngineVariants::Podman => { Engine::Podman }
+                };
+
+                let volumes = args.volumes.unwrap_or_default();
+                let devices = args.devices.unwrap_or_default();
+                let ports = args.ports.unwrap_or_default();
+                let args = args.args.unwrap_or_default();
+
+                let mut environment_variables = vec![];
+
+                for env in args.envs.unwrap_or_default() {
+                    if let Some((name, value)) = env.split_once('=') {
+                        let env = ContainerEnvironmentVariable::new(name, value)
+                            .map_err(|cause| cause.to_string())?;
+                        environment_variables.push(env)
+                    }
+                };
+
+                let executor_descriptor = ExecutorDescriptor::Container {
+                    engine,
+                    name: args.name.unwrap_or_default(),
+                    image: args.image,
+                    volumes,
+                    devices,
+                    envs: environment_variables,
+                    ports,
+                    command: args.command.unwrap_or_default(),
+                    args,
+                };
+
+                
+            }
+        }
+        let mut peer_descriptor = carl.peers.get_peer_descriptor(peer_id).await
+                    .map_err(|_| format!("Failed to get peer with ID <{}>.", peer_id))?;
 
         peer_descriptor.executors.executors.push(executor_descriptor);
 

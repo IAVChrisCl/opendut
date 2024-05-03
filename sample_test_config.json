@@ -1,0 +1,42 @@
+{
+	"test_name": "sample test description",
+	"engine": "docker",
+    "name": "caringcaribou:latest",
+	"image": "caringcaribou",
+	"interfaces": [
+        {
+            "Ethernet": {
+                "bridge_name": "br-opendut",
+                "container_internal_name": "eth1"
+            }
+        },
+        {
+            "CAN": {
+                "bridge_name": "br-vcan-opendut",
+                "container_internal_name": "can0"
+            }
+        }
+	],
+	"preconditions": [
+        {
+            "device_preconditions": [
+                {
+                    "device_id": "eb8c4a88-5bb9-49fd-a930-a52276188231",
+                    "clamp_15": "off",
+                    "clamp_30": "on"
+                }
+            ]
+        }
+	],
+
+	"results_url": "some.webdav-storage.com/test123",
+	"envs": {
+		"ENVVAR1": "someenvironmentvariable",
+		"ENVVAR2": "anotherenvironmentvariable"
+	},
+	"args": [
+		"-i can0",
+		"uds",
+		"discovery"
+	]
+}
