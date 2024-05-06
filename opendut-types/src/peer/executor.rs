@@ -24,7 +24,6 @@ pub enum ExecutorDescriptor {
         ports: Vec<ContainerPortSpec>,
         command: ContainerCommand,
         args: Vec<ContainerCommandArgument>,
-        interfaces: Vec<Interfaces>,
         preconditions: Vec<Preconditions>,
         results_url: ResultsUrl
     }
@@ -490,22 +489,6 @@ impl From<ContainerCommandArgument> for String {
 impl fmt::Display for ContainerCommandArgument {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Interfaces {
-    name: String,
-    value: String,
-}
-
-impl Interfaces {
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
-    
-    pub fn value(&self) -> &str {
-        self.value.as_str()
     }
 }
 

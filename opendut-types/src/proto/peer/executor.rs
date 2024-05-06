@@ -47,7 +47,6 @@ impl From<crate::peer::executor::ExecutorDescriptor> for ExecutorDescriptor {
                 ports,
                 command,
                 args,
-                interfaces,
                 preconditions,
                 results_url
             } => {
@@ -63,7 +62,6 @@ impl From<crate::peer::executor::ExecutorDescriptor> for ExecutorDescriptor {
                             ports: ports.into_iter().map(|port| port.into()).collect(),
                             command: Some(command.into()),
                             args: args.into_iter().map(|arg| arg.into()).collect(),
-                            interfaces: interfaces.into_iter().map(|interface| interface.into()).collect(),
                             preconditions: preconditions.into_iter().map(|precondition| precondition.into()).collect(),
                             results_url: Some(results_url.into()), 
                         }
@@ -98,7 +96,6 @@ impl TryFrom<ExecutorDescriptor> for crate::peer::executor::ExecutorDescriptor {
                     ports,
                     command,
                     args,
-                    interfaces,
                     preconditions,
                     results_url
                 } = descriptor;
@@ -134,8 +131,6 @@ impl TryFrom<ExecutorDescriptor> for crate::peer::executor::ExecutorDescriptor {
                     .into_iter()
                     .map(TryFrom::try_from)
                     .collect::<Result<_, _>>()?;
-                let interfaces = interfaces
-                    .into_iter();
                 let preconditions = preconditions
                     .into_iter();
                 let results_url = results_url
@@ -150,7 +145,6 @@ impl TryFrom<ExecutorDescriptor> for crate::peer::executor::ExecutorDescriptor {
                     ports,
                     command,
                     args,
-                    interfaces,
                     preconditions,
                     results_url
                 }

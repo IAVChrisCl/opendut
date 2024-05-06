@@ -3,20 +3,6 @@
 	"engine": "docker",
     "name": "caringcaribou:latest",
 	"image": "caringcaribou",
-	"interfaces": [
-        {
-            "Ethernet": {
-                "bridge_name": "br-opendut",
-                "container_internal_name": "eth1"
-            }
-        },
-        {
-            "CAN": {
-                "bridge_name": "br-vcan-opendut",
-                "container_internal_name": "can0"
-            }
-        }
-	],
 	"preconditions": [
         {
             "device_preconditions": [

@@ -25,10 +25,8 @@ message Container {
   repeated ContainerPortSpec ports = 7;
   ContainerCommand command = 8;
   repeated ContainerCommandArgument args = 9;
-
-  map<string, Interface> interfaces = 10;
-  repeated Precondition preconditions = 11;
-  ResultsUrl results_url = 12;
+  repeated Precondition preconditions = 10;
+  ResultsUrl results_url = 11;
 }
 
 message Engine {
@@ -45,11 +43,6 @@ message TestName {
 message Docker {}
 
 message Podman {}
-
-message Interface {
-  string bridge_name = 1;
-  string container_internal_name = 2;
-}
 
 message DevicePrecondition {
   string device_id = 1;
