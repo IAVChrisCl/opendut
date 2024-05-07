@@ -12,6 +12,7 @@ pub(crate) enum DockerCoreServices {
     Netbird,
     Firefox,
     Telemetry,
+    NginxWebdav,
     #[default]
     All,
 }
@@ -28,6 +29,7 @@ impl DockerCoreServices {
             DockerCoreServices::Network => "network",
             DockerCoreServices::Firefox => "firefox",
             DockerCoreServices::Telemetry => "telemetry",
+            DockerCoreServices::NginxWebdav => "nginx-webdav",
             DockerCoreServices::All => "all",
         }
     }

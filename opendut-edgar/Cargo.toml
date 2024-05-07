@@ -30,6 +30,7 @@ pem = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 regex = { workspace = true }
+reqwest = { workspace = true }
 rtnetlink = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
 shadow-rs = { workspace = true, default-features = true }
@@ -47,6 +48,8 @@ uuid = { workspace = true, features = ["v4"] }
 url = { workspace = true }
 walkdir = { workspace = true }
 which = { workspace = true }
+zip = { workspace = true }
+zip-extensions = { workspace = true }
 
 [dev-dependencies]
 assert_fs = { workspace = true }
