@@ -16,7 +16,7 @@ use opendut_types::util::net::NetworkInterfaceName;
 use crate::actions;
 use crate::actions::{DeletePeerDescriptorParams, GeneratePeerSetupParams, ListDevicesParams, ListPeerDescriptorsParams, StorePeerDescriptorOptions, StorePeerDescriptorParams};
 use crate::grpc::extract;
-use crate::peer::oidc_client_manager::OpenIdConnectClientManager;
+use crate::auth::oidc_client_manager::OpenIdConnectClientManager;
 use crate::resources::manager::ResourcesManagerRef;
 use crate::vpn::Vpn;
 
@@ -270,7 +270,7 @@ mod tests {
 
     use googletest::prelude::*;
     use rstest::rstest;
-    use crate::peer::oidc_client_manager::tests::oidc_client_manager;
+    use crate::auth::oidc_client_manager::tests::oidc_client_manager;
     use url::Url;
 
     use opendut_types::peer::{PeerLocation, PeerName, PeerNetworkDescriptor};

@@ -12,6 +12,8 @@ oidc_client = [
     "dep:anyhow",
     "dep:config",
     "dep:oauth2",
+    "dep:opendut-util",
+    "dep:pem",
     "dep:shadow-rs",
 ]
 client = [
@@ -39,6 +41,7 @@ wasm-client = [
 
 [dependencies]
 opendut-types = { workspace = true }
+opendut-util = { workspace = true, optional = true }
 
 anyhow = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true, default-features = false, features = ["clock", "serde", "wasmbind"] }
@@ -49,6 +52,7 @@ jsonwebtoken = { workspace = true, optional = true }
 leptos = { workspace = true, optional = true }
 leptos_oidc =  { workspace = true, optional = true }
 oauth2 = { workspace = true, default-features = false, optional = true, features = ["reqwest"] }
+pem = { workspace = true, optional = true, features = ["serde"]}
 prost = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["rustls-tls-native-roots"] }
 serde = { workspace = true, features = ["std", "derive"] }

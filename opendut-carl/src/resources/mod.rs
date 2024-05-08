@@ -1,20 +1,45 @@
 use std::any::{Any, TypeId};
 use std::collections::hash_map::{Values, ValuesMut};
 use std::collections::HashMap;
+use std::fmt;
 use std::marker::PhantomData;
+use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
+use opendut_types::peer::PeerId;
 
 pub mod manager;
 pub mod ids;
 
-#[derive(Copy, Clone, Eq, Hash, PartialEq)]
+#[derive(Copy, Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Id {
     value: Uuid,
 }
 
+impl Id {
+    pub fn random() -> Self {
+        Uuid::new_v4().into()
+    }
+    pub fn value(&self) -> Uuid {
+        self.value
+    }
+}
+
+impl fmt::Display for Id {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.value)
+    }
+}
+
 pub trait IntoId<R: Any + Send + Sync> {
     fn into_id(self) -> Id;
+}
+impl From<PeerId> for Id {
+    fn from(value: PeerId) -> Self {
+        Self {
+            value: value.0,
+        }
+    }
 }
 
 #[derive(Default)]

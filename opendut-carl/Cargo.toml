@@ -28,6 +28,7 @@ oauth2 = { workspace = true, default-features = false, features = ["reqwest"] }
 openidconnect = { workspace = true, default-features = false, features = ["reqwest"] }
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
+reqwest = { workspace = true, default-features = false, features = ["rustls-tls-native-roots"] }
 serde = { workspace = true, features = ["derive"] }
 shadow-rs = { workspace = true, default-features = true }
 tar = { workspace = true }

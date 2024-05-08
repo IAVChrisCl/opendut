@@ -45,6 +45,9 @@ impl TryFrom<&Config> for OidcIdentityProviderConfig {
             .map_err(|error| anyhow!("Failed to find configuration for `{}`. {}", OidcIdentityProviderConfig::CLIENT_SECRET, error))?;
         let issuer = config.get_string(OidcIdentityProviderConfig::ISSUER_URL)
             .map_err(|error| anyhow!("Failed to find configuration for `{}`. {}", OidcIdentityProviderConfig::ISSUER_URL, error))?;
+
+        // TODO: add validation for issuer url to new type
+
         let issuer_url = Url::parse(&issuer)
             .map_err(|error| anyhow!("Failed to parse issuer URL: {}", error))?;
         if issuer_url.as_str().ends_with('/') {

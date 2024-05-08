@@ -22,9 +22,11 @@ use opendut_types::util::net::{AuthConfig, Certificate, ClientCredentials, Netwo
 use opendut_types::vpn::VpnPeerConfiguration;
 use opendut_util::ErrorOr;
 use crate::peer::broker::{PeerMessagingBroker, PeerMessagingBrokerRef};
-use crate::peer::oidc_client_manager::{OAuthClientCredentials, OpenIdConnectClientManager};
+use crate::auth::oidc_client_manager::{OAuthClientCredentials, OpenIdConnectClientManager};
+use crate::resources::IntoId;
 
 use crate::resources::manager::ResourcesManagerRef;
+use crate::settings::CarlUrl;
 use crate::vpn::Vpn;
 
 pub struct StorePeerDescriptorParams {
@@ -298,9 +300,10 @@ pub async fn generate_peer_setup(params: GeneratePeerSetupParams) -> Result<Peer
                 AuthConfig::Disabled
             }
             Some(oidc_client_manager) => {
+                let resource_id = peer_id.into();
                 debug!("Generating OIDC client for peer '{peer_name}' <{peer_id}>.");
                 let issuer_url = oidc_client_manager.issuer_remote_url.clone();
-                let client_credentials = ClientCredentials::from(oidc_client_manager.register_new_client()
+                let client_credentials = ClientCredentials::from(oidc_client_manager.register_new_client(resource_id)
                     .await
                     .map_err(|cause| GeneratePeerSetupError::Internal { peer_id, peer_name: Clone::clone(&peer_name), cause: cause.to_string() })?
                 );
